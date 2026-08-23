@@ -9,15 +9,14 @@ Target: $ARGUMENTS (path to the test file to extend).
 
 Steps:
 
-1. Read the target test file. Extract every existing test case into `{paramName: value}` maps. Ask the user if the extraction is ambiguous.
-2. Build the full parameter model (including values not yet used in the existing tests). See the `coverwise` skill for parameter modeling guidance.
+1. Read the target test file. Extract every existing test case. Ask the user if the extraction is ambiguous.
+2. Build the full `model` map, including values not yet used in the existing tests. See the `coverwise` skill for parameter modeling guidance.
 3. Derive any necessary constraints from the code under test.
-4. Call `coverwise.analyze_coverage` first to show the user the current gaps.
-5. Call `coverwise.extend_tests` with:
-   - `existing`: the extracted test cases
-   - `parameters` / `constraints` / `strength`: the model
-6. In strict mode, the returned `tests` array contains the existing rows verbatim at the head in their original order, followed by generated rows. Verify that prefix and identify new rows with `result.tests.slice(existing.length)`.
-7. Append only the new tests to the file, matching the file's existing style and framework.
-8. Verify `coverage === 1.0`. If coverage is incomplete, report `uncoveredCount`, every returned `uncovered[].display`, and `omittedUncovered` when non-zero. Constraint-unreachable tuples are already removed from the coverage universe.
+4. Call `coverwise.pairwise_extend` with:
+   - `existing`: the extracted test cases (`{paramName: value}` maps, or positional rows in model order)
+   - `model` / `constraints` / `strength`: the model
+5. Report the gaps from the returned `before` block — that is the coverage of the suite as it stands, and it explains why each addition exists. No separate analyze call is needed.
+6. Append `newRows` to the file, matching its existing style and framework. Values arrive in their declared JSON types, so they can be written out as-is. Existing rows are preserved verbatim at the head of `rows`; verify that prefix still matches what the file contains.
+7. Verify `coverage === 1.0`. If coverage is incomplete, report `uncoveredCount`, every returned `uncovered[].display`, and `omittedUncovered` when non-zero. Constraint-unreachable tuples are already removed from the coverage universe.
 
 Do NOT rewrite, reorder, or delete existing tests — only append. If the user's existing tests have drifted from the parameter model (e.g. they use a value that no longer exists), stop and ask rather than silently "fixing" them.

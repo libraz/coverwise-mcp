@@ -1,11 +1,12 @@
 /**
- * End-to-end smoke tests for the claude-coverwise MCP server.
+ * End-to-end smoke tests for the coverwise-mcp MCP server.
  *
  * Spawns mcp/server.mjs as a subprocess and drives it with the official
  * MCP SDK client over stdio, exactly as Claude Code would. Validates that
  * every tool advertised in tools/list works on a small happy-path input.
  */
 import { spawn } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -22,7 +23,7 @@ async function startClient() {
     args: [serverPath],
   });
   const client = new Client(
-    { name: 'claude-coverwise-tests', version: '0.0.0' },
+    { name: 'coverwise-mcp-tests', version: '0.0.0' },
     { capabilities: {} },
   );
   await client.connect(transport);
@@ -36,6 +37,13 @@ function parseResult(result) {
   const block = result.content[0];
   expect(block.type).toBe('text');
   return JSON.parse(block.text);
+}
+
+/** Zip a columns + rows suite payload back into { paramName: value } maps. */
+function asMaps(out) {
+  expect(Array.isArray(out.columns)).toBe(true);
+  expect(Array.isArray(out.rows)).toBe(true);
+  return out.rows.map((row) => Object.fromEntries(out.columns.map((name, i) => [name, row[i]])));
 }
 
 const discreteParameters = () => [
@@ -60,7 +68,7 @@ const classParameters = () => [
   { name: 'method', values: ['GET', 'POST'] },
 ];
 
-describe('claude-coverwise MCP server', () => {
+describe('coverwise-mcp MCP server', () => {
   let client;
   let transport;
 
@@ -75,14 +83,25 @@ describe('claude-coverwise MCP server', () => {
   it('lists exactly the four expected tools', async () => {
     const { tools } = await client.listTools();
     const names = tools.map((t) => t.name).sort();
-    expect(names).toEqual(['analyze_coverage', 'estimate_model', 'extend_tests', 'generate']);
+    expect(names).toEqual([
+      'pairwise_analyze',
+      'pairwise_estimate',
+      'pairwise_extend',
+      'pairwise_generate',
+    ]);
     for (const tool of tools) {
       expect(tool.description).toBeTruthy();
       expect(tool.inputSchema).toBeDefined();
       expect(tool.inputSchema.type).toBe('object');
+      // Either input form satisfies the model requirement.
+      expect(tool.inputSchema.anyOf).toEqual([
+        { required: ['model'] },
+        { required: ['parameters'] },
+      ]);
+      expect(tool.inputSchema.properties.model).toBeDefined();
     }
 
-    const generateTool = tools.find((tool) => tool.name === 'generate');
+    const generateTool = tools.find((tool) => tool.name === 'pairwise_generate');
     expect(generateTool.inputSchema.properties.strength).toMatchObject({
       type: 'integer',
       minimum: 1,
@@ -94,9 +113,9 @@ describe('claude-coverwise MCP server', () => {
     });
   });
 
-  it('estimate_model returns parameter statistics without running generation', async () => {
+  it('pairwise_estimate returns parameter statistics without running generation', async () => {
     const result = await client.callTool({
-      name: 'estimate_model',
+      name: 'pairwise_estimate',
       arguments: {
         parameters: [
           { name: 'os', values: ['win', 'mac', 'linux'] },
@@ -112,9 +131,9 @@ describe('claude-coverwise MCP server', () => {
     expect(stats.estimatedTests).toBeGreaterThan(0);
   });
 
-  it('generate produces a covering array with full pairwise coverage', async () => {
+  it('pairwise_generate produces a covering array with full pairwise coverage', async () => {
     const result = await client.callTool({
-      name: 'generate',
+      name: 'pairwise_generate',
       arguments: {
         parameters: [
           { name: 'os', values: ['win', 'mac', 'linux'] },
@@ -129,16 +148,18 @@ describe('claude-coverwise MCP server', () => {
     expect(out.uncovered).toEqual([]);
     expect(out.uncoveredCount).toBe(0);
     expect(out.omittedUncovered).toBe(0);
-    expect(out.tests.length).toBeGreaterThanOrEqual(9);
-    for (const tc of out.tests) {
+    expect(out.columns).toEqual(['os', 'browser']);
+    const suite = asMaps(out);
+    expect(suite.length).toBeGreaterThanOrEqual(9);
+    for (const tc of suite) {
       expect(['win', 'mac', 'linux']).toContain(tc.os);
       expect(['chrome', 'firefox', 'safari']).toContain(tc.browser);
     }
   });
 
-  it('generate honours constraints', async () => {
+  it('pairwise_generate honours constraints', async () => {
     const result = await client.callTool({
-      name: 'generate',
+      name: 'pairwise_generate',
       arguments: {
         parameters: [
           { name: 'os', values: ['win', 'mac'] },
@@ -150,14 +171,14 @@ describe('claude-coverwise MCP server', () => {
     });
     const out = parseResult(result);
     expect(out.coverage).toBe(1);
-    for (const tc of out.tests) {
+    for (const tc of asMaps(out)) {
       expect(tc.os === 'win' && tc.browser === 'safari').toBe(false);
     }
   });
 
-  it('analyze_coverage reports a gap in an incomplete suite', async () => {
+  it('pairwise_analyze reports a gap in an incomplete suite', async () => {
     const result = await client.callTool({
-      name: 'analyze_coverage',
+      name: 'pairwise_analyze',
       arguments: {
         parameters: [
           { name: 'a', values: ['1', '2'] },
@@ -179,9 +200,9 @@ describe('claude-coverwise MCP server', () => {
     expect(report.coverageRatio).toBeCloseTo(0.5, 5);
   });
 
-  it('analyze_coverage with constraints removes impossible tuples from the universe', async () => {
+  it('pairwise_analyze with constraints removes impossible tuples from the universe', async () => {
     const result = await client.callTool({
-      name: 'analyze_coverage',
+      name: 'pairwise_analyze',
       arguments: {
         parameters: [
           { name: 'locale', values: ['en', 'ja', 'ar'] },
@@ -219,15 +240,16 @@ describe('claude-coverwise MCP server', () => {
     ];
     const constraints = ['IF a = 0 THEN c = 0', 'IF b = 0 THEN c = 1'];
     const generated = await client.callTool({
-      name: 'generate',
+      name: 'pairwise_generate',
       arguments: { parameters, constraints, seed: 11 },
     });
     const suite = parseResult(generated);
     expect(suite.coverage).toBe(1);
 
     const analyzed = await client.callTool({
-      name: 'analyze_coverage',
-      arguments: { parameters, constraints, tests: suite.tests },
+      name: 'pairwise_analyze',
+      // The generated rows go straight back in: no reshaping between calls.
+      arguments: { parameters, constraints, tests: suite.rows },
     });
     const report = parseResult(analyzed);
     expect(report.coverageRatio).toBe(1);
@@ -236,9 +258,9 @@ describe('claude-coverwise MCP server', () => {
     expect(report.uncovered).toEqual([]);
   });
 
-  it('analyze_coverage reports rows excluded from coverage accounting', async () => {
+  it('pairwise_analyze reports rows excluded from coverage accounting', async () => {
     const result = await client.callTool({
-      name: 'analyze_coverage',
+      name: 'pairwise_analyze',
       arguments: {
         parameters: [
           { name: 'a', values: ['1', '2'] },
@@ -255,10 +277,10 @@ describe('claude-coverwise MCP server', () => {
     expect(report.uncoveredCount).toBe(4);
   });
 
-  it('analyze_coverage reports the full gap count when diagnostics are truncated', async () => {
+  it('pairwise_analyze reports the full gap count when diagnostics are truncated', async () => {
     const values = Array.from({ length: 40 }, (_, index) => String(index));
     const result = await client.callTool({
-      name: 'analyze_coverage',
+      name: 'pairwise_analyze',
       arguments: {
         parameters: [
           { name: 'a', values },
@@ -274,9 +296,9 @@ describe('claude-coverwise MCP server', () => {
     expect(report.omittedUncovered).toBe(600);
   });
 
-  it('generate expands boundary values from type + range', async () => {
+  it('pairwise_generate expands boundary values from type + range', async () => {
     const result = await client.callTool({
-      name: 'generate',
+      name: 'pairwise_generate',
       arguments: {
         parameters: [
           { name: 'qty', type: 'integer', range: [1, 100], values: [] },
@@ -285,16 +307,16 @@ describe('claude-coverwise MCP server', () => {
       },
     });
     const out = parseResult(result);
-    const qtys = new Set(out.tests.map((t) => String(t.qty)));
+    const qtys = new Set(asMaps(out).map((t) => String(t.qty)));
     // integer boundary expansion of [1, 100] → 0,1,2,99,100,101
     for (const expected of ['0', '1', '2', '99', '100', '101']) {
       expect(qtys.has(expected)).toBe(true);
     }
   });
 
-  it('generate reports class coverage when values carry equivalence classes', async () => {
+  it('pairwise_generate reports class coverage when values carry equivalence classes', async () => {
     const result = await client.callTool({
-      name: 'generate',
+      name: 'pairwise_generate',
       arguments: {
         parameters: [
           {
@@ -316,13 +338,13 @@ describe('claude-coverwise MCP server', () => {
     expect(out.classCoverage.coveredClassTuples).toBe(out.classCoverage.totalClassTuples);
   });
 
-  it('extend_tests preserves existing tests and reaches full coverage', async () => {
+  it('pairwise_extend preserves existing tests and reaches full coverage', async () => {
     const existing = [
       { a: '1', b: 'x' },
       { a: '2', b: 'y' },
     ];
     const result = await client.callTool({
-      name: 'extend_tests',
+      name: 'pairwise_extend',
       arguments: {
         existing,
         mode: 'strict',
@@ -335,15 +357,21 @@ describe('claude-coverwise MCP server', () => {
     });
     const out = parseResult(result);
     expect(out.coverage).toBe(1);
-    expect(out.tests.length).toBeGreaterThanOrEqual(existing.length);
-    expect(out.tests.slice(0, existing.length)).toEqual(existing);
+    const suite = asMaps(out);
+    expect(suite.length).toBeGreaterThanOrEqual(existing.length);
+    expect(suite.slice(0, existing.length)).toEqual(existing);
+    // The additions are isolated so the caller never has to slice by hand.
+    expect(out.newRows).toEqual(out.rows.slice(existing.length));
+    // Coverage of the suite as it stood, folded in to save an analyze call.
+    expect(out.before.coverageRatio).toBeCloseTo(0.5, 5);
+    expect(out.before.uncoveredCount).toBe(2);
   });
 
   it('forwards the warnings array on a successful generation', async () => {
     // GenerateResult always carries a warnings array (empty on the happy path).
     // The MCP server must forward it verbatim so callers can inspect it.
     const result = await client.callTool({
-      name: 'generate',
+      name: 'pairwise_generate',
       arguments: {
         parameters: [
           { name: 'a', values: ['1', '2'] },
@@ -359,7 +387,7 @@ describe('claude-coverwise MCP server', () => {
     // A syntactically malformed constraint is a hard error in coverwise. The
     // MCP server should faithfully forward the structured error payload.
     const result = await client.callTool({
-      name: 'generate',
+      name: 'pairwise_generate',
       arguments: {
         parameters: [
           { name: 'a', values: ['1', '2'] },
@@ -376,7 +404,7 @@ describe('claude-coverwise MCP server', () => {
 
   it('surfaces structured INVALID_INPUT errors for invalid generation options', async () => {
     const result = await client.callTool({
-      name: 'generate',
+      name: 'pairwise_generate',
       arguments: {
         parameters: [
           { name: 'a', values: ['1', '2'] },
@@ -452,22 +480,25 @@ describe('claude-coverwise MCP server', () => {
         maxTests: 0,
       },
     },
-  ])('covers generate interaction: $scenario', async ({ arguments: args, expectedError }) => {
-    const result = await client.callTool({ name: 'generate', arguments: args });
-    const out = parseResult(result);
-    if (expectedError) {
-      expect(result.isError).toBe(true);
-      expect(out.code).toBe(expectedError);
-      return;
-    }
-    expect(result.isError).toBeFalsy();
-    expect(out.coverage).toBe(1);
-    expect(out.uncoveredCount).toBe(0);
-  });
+  ])(
+    'covers pairwise_generate interaction: $scenario',
+    async ({ arguments: args, expectedError }) => {
+      const result = await client.callTool({ name: 'pairwise_generate', arguments: args });
+      const out = parseResult(result);
+      if (expectedError) {
+        expect(result.isError).toBe(true);
+        expect(out.code).toBe(expectedError);
+        return;
+      }
+      expect(result.isError).toBeFalsy();
+      expect(out.coverage).toBe(1);
+      expect(out.uncoveredCount).toBe(0);
+    },
+  );
 
-  it('analyze_coverage reports a complete unconstrained suite', async () => {
+  it('pairwise_analyze reports a complete unconstrained suite', async () => {
     const result = await client.callTool({
-      name: 'analyze_coverage',
+      name: 'pairwise_analyze',
       arguments: {
         parameters: discreteParameters(),
         tests: [
@@ -484,9 +515,9 @@ describe('claude-coverwise MCP server', () => {
     expect(report.invalidTests).toEqual([]);
   });
 
-  it('analyze_coverage reports invalid rows with constraints present', async () => {
+  it('pairwise_analyze reports invalid rows with constraints present', async () => {
     const result = await client.callTool({
-      name: 'analyze_coverage',
+      name: 'pairwise_analyze',
       arguments: {
         parameters: discreteParameters(),
         tests: [{ a: '1' }],
@@ -499,10 +530,10 @@ describe('claude-coverwise MCP server', () => {
     expect(report.invalidTests[0].testIndex).toBe(0);
   });
 
-  it('analyze_coverage truncates constrained incomplete-suite diagnostics', async () => {
+  it('pairwise_analyze truncates constrained incomplete-suite diagnostics', async () => {
     const values = Array.from({ length: 40 }, (_, index) => String(index));
     const result = await client.callTool({
-      name: 'analyze_coverage',
+      name: 'pairwise_analyze',
       arguments: {
         parameters: [
           { name: 'a', values },
@@ -523,7 +554,7 @@ describe('claude-coverwise MCP server', () => {
     { scenario: 'constraints + seed + default mode', constraints: true, seed: 31 },
     { scenario: 'no constraints or seed + default mode' },
     { scenario: 'constraints + no seed + strict mode', constraints: true, mode: 'strict' },
-  ])('covers extend_tests interaction: $scenario', async ({ constraints, seed, mode }) => {
+  ])('covers pairwise_extend interaction: $scenario', async ({ constraints, seed, mode }) => {
     const existing = [
       { a: '1', b: 'x' },
       { a: '2', b: 'y' },
@@ -539,11 +570,11 @@ describe('claude-coverwise MCP server', () => {
       args.mode = mode;
     }
 
-    const result = await client.callTool({ name: 'extend_tests', arguments: args });
+    const result = await client.callTool({ name: 'pairwise_extend', arguments: args });
     const out = parseResult(result);
     expect(result.isError).toBeFalsy();
     expect(out.coverage).toBe(1);
-    expect(out.tests.slice(0, existing.length)).toEqual(existing);
+    expect(asMaps(out).slice(0, existing.length)).toEqual(existing);
   });
 
   it.each([
@@ -564,7 +595,7 @@ describe('claude-coverwise MCP server', () => {
       subModels: [{ parameters: ['a', 'b'], strength: 2 }],
     },
   ])(
-    'covers estimate_model interaction: $scenario',
+    'covers pairwise_estimate interaction: $scenario',
     async ({ constraints, strength, subModels }) => {
       const args = {
         parameters: [
@@ -583,7 +614,7 @@ describe('claude-coverwise MCP server', () => {
         args.subModels = subModels;
       }
 
-      const result = await client.callTool({ name: 'estimate_model', arguments: args });
+      const result = await client.callTool({ name: 'pairwise_estimate', arguments: args });
       const stats = parseResult(result);
       expect(result.isError).toBeFalsy();
       expect(stats.parameterCount).toBe(3);
@@ -591,6 +622,178 @@ describe('claude-coverwise MCP server', () => {
       expect(stats.subModelCount).toBe(subModels ? 1 : 0);
     },
   );
+});
+
+describe('high-level input and output shapes', () => {
+  let client;
+  let transport;
+
+  beforeAll(async () => {
+    ({ client, transport } = await startClient());
+  });
+
+  afterAll(async () => {
+    await transport?.close();
+  });
+
+  const call = async (name, args) => {
+    const result = await client.callTool({ name, arguments: args });
+    return { result, payload: parseResult(result) };
+  };
+
+  it('accepts the shorthand model and the explicit parameter list interchangeably', async () => {
+    const shorthand = await call('pairwise_generate', {
+      model: { os: ['win', 'mac'], browser: ['chrome', 'safari'], mode: ['fast', 'safe'] },
+      seed: 5,
+    });
+    const explicit = await call('pairwise_generate', {
+      parameters: [
+        { name: 'os', values: ['win', 'mac'] },
+        { name: 'browser', values: ['chrome', 'safari'] },
+        { name: 'mode', values: ['fast', 'safe'] },
+      ],
+      seed: 5,
+    });
+    expect(shorthand.payload.columns).toEqual(['os', 'browser', 'mode']);
+    expect(shorthand.payload).toEqual(explicit.payload);
+  });
+
+  it('accepts a { type, range } spec inside the shorthand model', async () => {
+    const { payload } = await call('pairwise_generate', {
+      model: { qty: { type: 'integer', range: [1, 100] }, flag: ['on', 'off'] },
+    });
+    const qtys = new Set(asMaps(payload).map((row) => row.qty));
+    for (const expected of [0, 1, 2, 99, 100, 101]) {
+      expect(qtys.has(expected)).toBe(true);
+    }
+  });
+
+  it('returns values in the JSON type they were declared with', async () => {
+    // The engine works on stringified values; without restoration every row
+    // would come back as "1" / "true" and need casting before it can be used.
+    const { payload } = await call('pairwise_generate', {
+      model: { retries: [0, 1, 5], verbose: [true, false], mode: ['fast', 'safe'] },
+    });
+    for (const row of asMaps(payload)) {
+      expect(typeof row.retries).toBe('number');
+      expect(typeof row.verbose).toBe('boolean');
+      expect(typeof row.mode).toBe('string');
+    }
+  });
+
+  it('restores types on boundary values the model never declared', async () => {
+    const { payload } = await call('pairwise_generate', {
+      model: { qty: { type: 'integer', range: [1, 3] }, flag: ['on', 'off'] },
+    });
+    for (const row of asMaps(payload)) {
+      expect(Number.isInteger(row.qty)).toBe(true);
+    }
+  });
+
+  it('restores types on negative rows too', async () => {
+    const { payload } = await call('pairwise_generate', {
+      model: {
+        qty: [1, 50, { value: -1, invalid: true }],
+        flag: [true, false],
+        mode: ['fast', 'safe'],
+      },
+    });
+    expect(payload.negativeRows.length).toBeGreaterThan(0);
+    const qtyIndex = payload.columns.indexOf('qty');
+    for (const row of payload.negativeRows) {
+      expect(typeof row[qtyIndex]).toBe('number');
+    }
+    expect(payload.negativeRows.some((row) => row[qtyIndex] === -1)).toBe(true);
+  });
+
+  it('rejects a parameter whose values collide once stringified', async () => {
+    // Type restoration maps an engine token back to its declared value, which
+    // only works because 1 and "1" cannot coexist in one parameter. Pin that
+    // guarantee here: without it a restored row could carry the wrong type.
+    const { result, payload } = await call('pairwise_generate', {
+      model: { amount: [1, '1', 2], flag: ['on', 'off'] },
+    });
+    expect(result.isError).toBe(true);
+    expect(payload.code).toBe('INVALID_INPUT');
+    expect(payload.message).toMatch(/duplicate value/i);
+  });
+
+  it('round-trips generated rows into analyze without reshaping', async () => {
+    const model = {
+      os: ['win', 'mac', 'linux'],
+      browser: ['chrome', 'safari'],
+      flag: [true, false],
+    };
+    const generated = await call('pairwise_generate', { model, seed: 3 });
+    const analyzed = await call('pairwise_analyze', { model, tests: generated.payload.rows });
+    expect(analyzed.payload.coverageRatio).toBe(1);
+    expect(analyzed.payload.invalidTests).toEqual([]);
+  });
+
+  it('accepts positional rows as the existing suite for extension', async () => {
+    const model = { a: ['1', '2'], b: ['x', 'y'] };
+    const { payload } = await call('pairwise_extend', {
+      model,
+      existing: [
+        ['1', 'x'],
+        ['2', 'y'],
+      ],
+    });
+    expect(payload.coverage).toBe(1);
+    expect(payload.rows.slice(0, 2)).toEqual([
+      ['1', 'x'],
+      ['2', 'y'],
+    ]);
+    expect(payload.newRows).toEqual(payload.rows.slice(2));
+    expect(payload.before.uncoveredCount).toBe(2);
+  });
+
+  it('reports a row whose width does not match the model', async () => {
+    const { result, payload } = await call('pairwise_analyze', {
+      model: { a: ['1', '2'], b: ['x', 'y'] },
+      tests: [['1', 'x'], ['2']],
+    });
+    expect(result.isError).toBe(true);
+    expect(payload.code).toBe('INVALID_INPUT');
+    expect(payload.message).toMatch(/tests\[1\] has 1 values but the model has 2 parameters/);
+  });
+
+  it('rejects passing both input forms at once', async () => {
+    const { result, payload } = await call('pairwise_generate', {
+      model: { a: ['1', '2'] },
+      parameters: [{ name: 'a', values: ['1', '2'] }],
+    });
+    expect(result.isError).toBe(true);
+    expect(payload.code).toBe('INVALID_INPUT');
+    expect(payload.message).toMatch(/not both/);
+  });
+
+  it('rejects a call with no parameter model at all', async () => {
+    const { result, payload } = await call('pairwise_generate', { seed: 1 });
+    expect(result.isError).toBe(true);
+    expect(payload.code).toBe('INVALID_INPUT');
+    expect(payload.message).toMatch(/`model`/);
+  });
+
+  it('rejects a model entry that is neither a value list nor a spec object', async () => {
+    const { result, payload } = await call('pairwise_generate', { model: { a: 'oops' } });
+    expect(result.isError).toBe(true);
+    expect(payload.code).toBe('INVALID_INPUT');
+    expect(payload.message).toMatch(/model\.a/);
+  });
+
+  it('rejects an empty model', async () => {
+    const { result, payload } = await call('pairwise_generate', { model: {} });
+    expect(result.isError).toBe(true);
+    expect(payload.code).toBe('INVALID_INPUT');
+    expect(payload.message).toMatch(/at least one parameter/);
+  });
+
+  it('reports an unknown tool name rather than a model error', async () => {
+    const { result, payload } = await call('generate', { model: { a: ['1', '2'] } });
+    expect(result.isError).toBe(true);
+    expect(payload.message).toMatch(/Unknown tool: generate/);
+  });
 });
 
 describe('CLI entry point', () => {
@@ -605,7 +808,12 @@ describe('CLI entry point', () => {
     try {
       const { tools } = await client.listTools();
       const names = tools.map((t) => t.name).sort();
-      expect(names).toEqual(['analyze_coverage', 'estimate_model', 'extend_tests', 'generate']);
+      expect(names).toEqual([
+        'pairwise_analyze',
+        'pairwise_estimate',
+        'pairwise_extend',
+        'pairwise_generate',
+      ]);
     } finally {
       await transport.close();
     }
@@ -624,5 +832,49 @@ describe('install-deps hook script', () => {
       child.on('error', reject);
     });
     expect(code).toBe(0);
+  });
+});
+
+describe('session-context hook script', () => {
+  const hookPath = resolve(here, '..', 'scripts', 'session-context.mjs');
+
+  /** Run the hook against a working directory and capture its stdout. */
+  const runIn = (projectDir) =>
+    new Promise((done, fail) => {
+      const child = spawn(process.execPath, [hookPath], {
+        env: { CLAUDE_PROJECT_DIR: projectDir },
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      let stdout = '';
+      child.stdout.on('data', (chunk) => {
+        stdout += chunk;
+      });
+      child.on('exit', (code) => done({ code, stdout }));
+      child.on('error', fail);
+    });
+
+  it('states the applicability rule inside a code project', async () => {
+    const { code, stdout } = await runIn(resolve(here, '..'));
+    expect(code).toBe(0);
+    const payload = JSON.parse(stdout);
+    expect(payload.hookSpecificOutput.hookEventName).toBe('SessionStart');
+    const context = payload.hookSpecificOutput.additionalContext;
+    // The tool names must be present: they are the handle a session needs to
+    // find the server when MCP schemas are loaded on demand rather than upfront.
+    for (const tool of [
+      'pairwise_generate',
+      'pairwise_analyze',
+      'pairwise_extend',
+      'pairwise_estimate',
+    ]) {
+      expect(context).toContain(tool);
+    }
+    expect(context).toMatch(/3 or more independent parameters/);
+  });
+
+  it('stays silent outside a code project', async () => {
+    const { code, stdout } = await runIn(tmpdir());
+    expect(code).toBe(0);
+    expect(stdout).toBe('');
   });
 });

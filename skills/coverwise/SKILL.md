@@ -1,76 +1,149 @@
 ---
 name: coverwise
-description: Check and improve combinatorial (pairwise / t-wise) coverage of tests. Use when writing tests for code that takes multiple parameters (CLI flags, config options, feature flags, API query params, state machines, form fields) and you need to ensure every parameter interaction is exercised without writing a full cartesian product. Also use when the user asks about "pairwise", "t-wise", "covering arrays", "combinatorial testing", or "test matrix".
+description: Combinatorial (pairwise / t-wise) coverage for tests. Use whenever you write, review, or extend tests for a function, endpoint, CLI, component, or config surface that takes 3 or more independent parameters — including when the request is only "write tests", "add test cases", or "improve the tests" and says nothing about coverage or combinations. Also use when asked about pairwise, t-wise, covering arrays, combinatorial testing, or a test matrix.
 ---
 
 # coverwise — Combinatorial Coverage for Tests
 
 This skill wraps the `coverwise` MCP server, which exposes four tools backed by a WASM pairwise / t-wise engine:
 
-- `generate` — build a minimal test suite from parameters + constraints
-- `analyze_coverage` — check an existing test suite for missing interactions
-- `extend_tests` — add the minimum extra tests needed to reach 100% coverage
-- `estimate_model` — sanity-check a model before running generation
+- `pairwise_generate` — build a minimal test suite from a parameter model + constraints
+- `pairwise_analyze` — check an existing test suite for missing interactions
+- `pairwise_extend` — add the minimum extra tests needed to reach 100% coverage
+- `pairwise_estimate` — pre-flight sizing for a model that might be too wide
 
 ## When to reach for this
 
-Use the MCP tools (not ad-hoc reasoning) whenever the system under test has **≥ 3 independent parameters with ≥ 2 values each**. A cartesian product of 4 parameters × 3 values = 81 tests; pairwise covers every 2-way interaction in ~9. The tools produce the minimum.
+Whenever the system under test has **3 or more independent parameters with 2 or more values each**, build a parameter model and let the engine choose the combinations. A cartesian product of 4 parameters × 3 values = 81 tests; pairwise covers every 2-way interaction in ~9. Choosing a handful of plausible-looking combinations by hand is the failure mode these tools exist to prevent, and it is invisible in the finished test file — the suite looks thorough either way.
 
-Typical triggers:
+This applies to the ordinary request, not just the explicit one. "Write tests for `render(theme, density, locale, dir)`" is a combinatorial task even though it names no coverage concept.
 
-- "Write tests for this function that takes `{flagA, flagB, mode, region}`…"
-- "Does my test suite cover all combinations of X and Y?"
-- "Add tests for the cases I'm missing."
-- CLI tools, REST endpoint query params, feature flag matrices, form validation, state machines, build configuration matrices.
+Typical shapes: CLI flags, REST query params, feature flag matrices, form validation, state machines, build configuration matrices, component props.
 
 ## The recommended workflow
 
-1. **Extract parameters** from the code / spec. Each parameter has a `name` and discrete `values`.
-   - Enums → use values as-is
-   - Numeric ranges → bucket into boundary values (min, typical, max), or let the engine expand them automatically with `type` + `range` (see *Boundary value expansion* below)
+1. **Extract parameters** from the code or spec, and write them as a `model` map.
+   - Enums and unions → list every variant
    - Booleans → `[true, false]`
-   - Nullable → add `null` as an explicit value if null behavior matters
-2. **Call `estimate_model`** first for any non-trivial model. If `estimatedTests` is surprisingly large or `totalTuples` explodes, the model is probably too wide — bucket numeric ranges or split into sub-models.
-3. **Write constraints** for impossible combinations (see DSL below). Fewer is better — each constraint shrinks the reachable space.
-4. **Generate or analyze**:
-   - New test suite: call `generate`.
-   - Reviewing existing tests: call `analyze_coverage`, inspect `uncovered[].display` strings.
-   - Filling gaps in existing tests: call `extend_tests` with the current tests as `existing`.
-5. **Verify**: generated/extended `coverage` or analyzed `coverageRatio` should be `1.0`. If not, compare `uncoveredCount` with `uncovered.length`, report each returned `display`, and mention `omittedUncovered` when diagnostics were truncated. Constraint-unreachable tuples are removed from the coverage universe and do not appear in `uncovered`.
-6. **Translate to the target test framework**. The returned `tests` array is `[{param: value, ...}, ...]`. Map each row to one test case in the user's framework (vitest, jest, pytest, Go table tests, etc.).
+   - Numeric ranges → declare `{"type": "integer", "range": [min, max]}` and let boundary values be injected; do not enumerate the range by hand
+   - Nullable → add an explicit `null`-ish value only if null behavior matters
+2. **Write constraints** for impossible combinations (see the DSL below). Fewer is better — each constraint shrinks the reachable space.
+3. **Call the right tool**:
+   - New suite → `pairwise_generate`
+   - Reviewing or finishing an existing suite → `pairwise_analyze`
+   - Filling gaps while keeping the current tests → `pairwise_extend`
+4. **Verify** `coverage` (generate/extend) or `coverageRatio` (analyze) is `1.0`. If not, report `uncoveredCount` as the authoritative total, every returned `uncovered[].display`, and `omittedUncovered` when diagnostics were truncated. Constraint-unreachable tuples are removed from the coverage universe and never appear in `uncovered`.
+5. **Translate to the target framework.** The result is `columns` (parameter names) plus `rows` (positional values, in their declared JSON types). That maps 1:1 onto a table-driven test — `test.each` in vitest/jest, `pytest.mark.parametrize`, a Go table `[]struct`. Emit the rows as the table and write one body that consumes them.
 
-## Boundary value expansion
+Skip `pairwise_estimate` for ordinary models: `pairwise_generate` already reports the same counts in `stats`. Reach for it only when the model is large (roughly 8+ parameters, or a parameter with many values) and a tuple explosion needs catching before it happens.
 
-Instead of hand-bucketing a numeric range, declare it and let the engine inject the boundary values. Set `type` (`"integer"` or `"float"`) and `range: [min, max]` on the parameter; the value set is expanded to `min-1, min, min+1, max-1, max, max+1` (spaced by `step`, default `1.0`, for `"float"`). Any explicit `values` you list are kept alongside the generated boundaries.
+## Writing the model
+
+The `model` map is the preferred input form: parameter name → values.
 
 ```json
 {
-  "name": "qty",
-  "type": "integer",
-  "range": [1, 100],
-  "values": []
+  "model": {
+    "theme": ["light", "dark", "hc"],
+    "density": ["compact", "cozy"],
+    "retries": { "type": "integer", "range": [0, 5] },
+    "verbose": [true, false]
+  }
 }
 ```
 
-This produces `0, 1, 2, 99, 100, 101` — the off-by-one neighbors that catch most boundary bugs. Use it whenever the parameter is genuinely numeric; prefer it over passing a long literal list.
+An explicit `parameters: [{name, values}, ...]` array is still accepted, but pass one form or the other — never both.
 
-## Equivalence classes
+### Boundary value expansion
 
-When several values are interchangeable for the behavior under test (e.g. every 4xx status is "client error"), tag them with the same `class` name. The engine then reports `classCoverage` in the result, telling you whether each *class* — not just each raw value — was exercised.
+A numeric parameter declared with `type` (`"integer"` or `"float"`) and `range: [min, max]` expands to `min-1, min, min+1, max-1, max, max+1` (spaced by `step`, default `1.0`, for `"float"`) — the off-by-one neighbours that catch most boundary bugs. Any explicit `values` you list are kept alongside the generated boundaries. Prefer this over passing a long literal list.
+
+### Equivalence classes
+
+When several values are interchangeable for the behavior under test (every 4xx is "client error"), tag them with the same `class`. The result then carries a `classCoverage` block (`totalClassTuples`, `coveredClassTuples`, `classCoverageRatio`), which lets you argue "all error categories are covered" without exhaustively testing every status code.
 
 ```json
 {
-  "name": "status",
-  "values": [
-    { "value": 400, "class": "client_error" },
-    { "value": 404, "class": "client_error" },
-    { "value": 500, "class": "server_error" },
-    { "value": 200, "class": "ok" }
+  "model": {
+    "status": [
+      { "value": 400, "class": "client_error" },
+      { "value": 404, "class": "client_error" },
+      { "value": 500, "class": "server_error" },
+      { "value": 200, "class": "ok" }
+    ],
+    "method": ["GET", "POST"]
+  }
+}
+```
+
+### Negative values and single-fault tests
+
+Tag a value with `invalid: true` when it is supposed to make the system under test reject the input (an out-of-range quantity, a malformed token, an unsupported format).
+
+```json
+{ "model": { "qty": [1, 50, { "value": -1, "invalid": true }] } }
+```
+
+Invalid values are kept out of the positive suite. They come back in a separate `negativeRows` array, built single-fault: each row carries exactly one invalid value with every other parameter valid, so a failing test points at one cause. The result then also carries `negativeCoverage` (`totalTuples`, `coveredTuples`, `omittedTuples`, `coverageRatio`).
+
+Translate the two arrays differently: `rows` assert the success path, `negativeRows` assert the specific rejection (error code, exception, status). Never merge them into one loop that expects success.
+
+## Reading the result
+
+`pairwise_generate` and `pairwise_extend` return:
+
+```json
+{
+  "columns": ["os", "browser", "retries"],
+  "rows": [["win", "chrome", 0], ["mac", "safari", 5]],
+  "coverage": 1.0,
+  "stats": { "totalTuples": 18, "coveredTuples": 18, "testCount": 6 },
+  "uncovered": [],
+  "uncoveredCount": 0,
+  "omittedUncovered": 0,
+  "warnings": [],
+  "suggestions": []
+}
+```
+
+Values come back in the JSON type they were declared with — `0`, not `"0"`; `true`, not `"true"` — so a row can be emitted into test code as-is.
+
+`pairwise_extend` adds two fields:
+
+- `newRows` — only the appended rows, ready to add to the file. No slicing arithmetic needed; existing rows are preserved verbatim at the head of `rows` in their original order.
+- `before` — the coverage diagnostics of the suite as it stood. Use it to explain why the additions exist; a separate `pairwise_analyze` call is unnecessary.
+
+An existing row that does not match the model is kept in `rows` all the same, and `warnings` names the offending value (`value '9' is not declared by parameter a`). Report that row: it stays in the file, but it does not count toward coverage, so the additions were sized as if it were not there.
+
+`pairwise_analyze` returns the diagnostics directly:
+
+```json
+{
+  "totalTuples": 36,
+  "coveredTuples": 32,
+  "coverageRatio": 0.888,
+  "uncoveredCount": 4,
+  "omittedUncovered": 3,
+  "invalidTests": [],
+  "uncovered": [
+    {
+      "tuple": ["os=linux", "browser=safari"],
+      "params": ["os", "browser"],
+      "reason": "never covered",
+      "display": "os=linux, browser=safari"
+    }
   ]
 }
 ```
 
-The output gains a `classCoverage` block (`totalClassTuples`, `coveredClassTuples`, `classCoverageRatio`). Use it to argue "all error categories are covered" without exhaustively testing every status code.
+Report back in the `display` form — it is the shortest faithful description of what is missing. `uncovered` is capped at 1,000 diagnostic entries, so always report `uncoveredCount` as the authoritative total and `omittedUncovered` when it is non-zero. Report `invalidTests` separately; those rows were excluded from coverage accounting.
+
+## Passing existing tests in
+
+`tests` (analyze) and `existing` (extend) accept either form:
+
+- `{"paramName": value}` maps — natural when reading tests out of a file
+- positional rows in the model's parameter order — so the `rows` array from `pairwise_generate` can be passed straight back with no reshaping
 
 ## Constraint DSL — quick reference
 
@@ -136,85 +209,54 @@ IF region = "us-east-1" THEN provider = aws
 
 ## Anti-patterns (what AI gets wrong)
 
-- **Too many constraints.** Each constraint subtracts from the reachable space. If coverage can't reach 1.0, the first thing to check is whether constraints are contradicting each other.
-- **Type mismatch.** `"1"` (string) and `1` (number) are different values. Pick one and be consistent per parameter.
-- **Raw continuous ranges.** Don't pass `values: [0, 1, 2, ..., 100]`. Bucket to boundary values, or declare `type` + `range` and let boundary expansion inject them.
-- **Forgetting `extend_tests`.** When the user has hand-written tests they want to keep, use `extend_tests`, not `generate` — otherwise you'll throw away their tests.
+- **Picking combinations by hand.** The most common failure is never building a model at all — writing six test cases that look representative and stopping. Six hand-picked cases across four parameters typically leave a third of the pairs untouched, and nothing in the finished file shows it.
+- **Too many constraints.** Each constraint subtracts from the reachable space. If coverage cannot reach 1.0, the first thing to check is whether constraints contradict each other.
+- **Type mismatch.** `"1"` (string) and `1` (number) are the same token to the engine; declaring both in one parameter is rejected as a duplicate. Pick one type per parameter and be consistent.
+- **Raw continuous ranges.** Don't pass `values: [0, 1, 2, ..., 100]`. Declare `type` + `range` and let boundary expansion inject the interesting values.
+- **Regenerating instead of extending.** When the user has hand-written tests they want to keep, use `pairwise_extend`, not `pairwise_generate` — otherwise you throw their tests away.
 - **Strength inflation.** Default to `strength: 2` (pairwise). Only bump to 3 when three-way interactions genuinely matter (security, money, critical state machines). Test count grows fast with strength.
 - **Treating constraint-unreachable tuples as gaps.** With the same constraints supplied to every operation, tuples that cannot extend to a valid complete test are removed from the coverage universe. They do not appear in `uncovered`; every returned tuple is a real coverage gap.
-- **Ignoring invalid existing rows.** `analyze_coverage` excludes malformed or out-of-model rows from coverage accounting and reports them in `invalidTests`. Surface these rows separately instead of counting them as coverage.
+- **Folding `negativeRows` into the positive suite.** Rows produced from `invalid: true` values belong in tests that assert rejection. Appending them to the positive loop turns a negative case into a false success expectation.
+- **Ignoring invalid existing rows.** `pairwise_analyze` excludes malformed or out-of-model rows from coverage accounting and reports them in `invalidTests`. Surface these rows separately instead of counting them as coverage.
 
 ## Analyzing a constrained model
 
-When the parameter model has constraints, **pass them to `analyze_coverage` too** — not just to `generate`. Without constraints, the analyzer cannot know that some tuples are impossible and will report them as `never covered`, polluting your "what's missing" list.
+When the parameter model has constraints, **pass them to `pairwise_analyze` too** — not just to `pairwise_generate`. Without constraints, the analyzer cannot know that some tuples are impossible and will report them as `never covered`, polluting the "what's missing" list.
 
-```json
-{
-  "parameters": [...],
-  "tests": [...],
-  "constraints": ["IF os = macOS THEN browser != IE"]
-}
-```
+With constraints supplied, impossible tuples are **removed from the coverage universe entirely** — including partial tuples that do not directly violate a constraint but cannot be extended to any valid complete test. They do not appear in `totalTuples`, `coveredTuples`, or `uncovered`. This matches the generator's semantics, so analyzing a suite that `pairwise_generate` produced for the same model + constraints yields `coverageRatio === 1.0`.
 
-With constraints supplied, impossible tuples are **removed from the coverage universe entirely** — including partial tuples that do not directly violate a constraint but cannot be extended to any valid complete test. They do not appear in `totalTuples`, `coveredTuples`, or `uncovered`. This matches the generator's semantics, so analyzing a suite that `generate` produced for the same model+constraints yields `coverageRatio === 1.0`.
+Rule of thumb: use the same `constraints` array across `pairwise_analyze` / `pairwise_generate` / `pairwise_extend` for the same model.
 
-Rule of thumb: use the same `constraints` array in `analyze_coverage` / `generate` / `extend_tests` for the same model.
-
-## Reading `analyze_coverage` output
-
-```json
-{
-  "totalTuples": 36,
-  "coveredTuples": 32,
-  "coverageRatio": 0.888,
-  "uncoveredCount": 4,
-  "omittedUncovered": 3,
-  "invalidTests": [],
-  "uncovered": [
-    {
-      "tuple": ["os=linux", "browser=safari"],
-      "params": ["os", "browser"],
-      "reason": "never covered",
-      "display": "os=linux, browser=safari"
-    }
-  ]
-}
-```
-
-Report back to the user in the `display` form — it's the shortest faithful description of what's missing. `uncovered` is capped at 1,000 diagnostic entries, so always report `uncoveredCount` as the authoritative total and `omittedUncovered` when it is non-zero. Report `invalidTests` separately; those test rows were excluded from coverage accounting.
-
-## v1.3 input validation and extension guarantees
+## Input validation and guarantees
 
 - `strength` must be a positive integer and cannot exceed the usable model strength. Pairwise generation therefore needs at least two parameters.
 - `seed` and `maxTests` must be unsigned 32-bit integers. Weights must be finite and positive, seed rows must contain exactly the model parameters, and sub-models must name valid parameters with a valid strength.
 - All public surfaces return structured `INVALID_INPUT` errors for invalid options. Repeat the offending field and message instead of retrying with silently altered input.
-- `extend_tests` uses strict mode: existing rows are preserved verbatim at the start of the returned `tests` array and generated rows are appended. The new rows are `tests.slice(existing.length)`.
+- `pairwise_extend` uses strict mode: existing rows are preserved verbatim at the head of `rows`, and the additions are also returned separately as `newRows`.
 
 ## Error codes
 
-The MCP tools return structured errors:
-
-- `INVALID_INPUT` — malformed parameters/options or a typo in a parameter value
+- `INVALID_INPUT` — malformed model/options, or a typo in a parameter value
 - `CONSTRAINT_ERROR` — malformed constraint syntax or contradictory constraints. Fix syntax errors verbatim; ask the user to loosen contradictory constraints.
-- `INSUFFICIENT_COVERAGE` — `maxTests` cap was too tight. Raise it or drop the cap.
+- `INSUFFICIENT_COVERAGE` — the `maxTests` cap was too tight. Raise it or drop the cap.
 - `TUPLE_EXPLOSION` — strength × parameter count is too large. Lower strength or split into sub-models.
 
-When a constraint error occurs, repeat back the failing constraint to the user; don't try to silently rewrite it.
+When a constraint error occurs, repeat back the failing constraint to the user; don't silently rewrite it.
 
 ## One-shot example
 
-User: *"Write tests for a function `render(theme, density, locale, dir)` where theme ∈ {light, dark, hc}, density ∈ {compact, cozy}, locale ∈ {en, ja, ar}, dir ∈ {ltr, rtl}. Arabic and Hebrew must be RTL; everything else LTR."*
+User: *"Write tests for `render(theme, density, locale, dir)` where theme ∈ {light, dark, hc}, density ∈ {compact, cozy}, locale ∈ {en, ja, ar}, dir ∈ {ltr, rtl}. Arabic must be RTL; everything else LTR."*
 
-Call `generate`:
+Call `pairwise_generate`:
 
 ```json
 {
-  "parameters": [
-    {"name": "theme",   "values": ["light", "dark", "hc"]},
-    {"name": "density", "values": ["compact", "cozy"]},
-    {"name": "locale",  "values": ["en", "ja", "ar"]},
-    {"name": "dir",     "values": ["ltr", "rtl"]}
-  ],
+  "model": {
+    "theme": ["light", "dark", "hc"],
+    "density": ["compact", "cozy"],
+    "locale": ["en", "ja", "ar"],
+    "dir": ["ltr", "rtl"]
+  },
   "constraints": [
     "IF locale = ar THEN dir = rtl",
     "IF locale IN {en, ja} THEN dir = ltr"
@@ -222,4 +264,4 @@ Call `generate`:
 }
 ```
 
-Then translate each row of `result.tests` into one `test(...)` call in the user's framework.
+Then emit `columns` as the table header and `rows` as the table body of a single parametrized test.

@@ -10,17 +10,19 @@ Target: $ARGUMENTS (a path to a test file or directory, or empty to infer from c
 Steps:
 
 1. Read the target test file(s). Identify the function or endpoint under test and the parameters it accepts.
-2. Extract the parameter model: for each parameter, list the discrete values that appear in the tests AND any additional values that exist in the type / enum but are missing.
-3. Call the `coverwise.analyze_coverage` MCP tool with:
-   - `parameters`: the full parameter model (including values that are currently untested)
-   - `tests`: the test cases already present, as `{paramName: value}` maps
+2. Build the `model` map: for each parameter, the discrete values that appear in the tests AND any additional values that exist in the type / enum but are missing from them.
+3. Derive any constraints that hold for the code under test, so impossible combinations are not reported as gaps.
+4. Call `coverwise.pairwise_analyze` with:
+   - `model`: the full parameter model, including values that are currently untested
+   - `tests`: the test cases already present, as `{paramName: value}` maps or positional rows in model order
+   - `constraints`: as derived above
    - `strength`: 2 unless the user specified otherwise
-4. Report:
+5. Report:
    - Current coverage ratio
    - The authoritative `uncoveredCount`, plus every returned tuple using its `display` string
    - `omittedUncovered` when non-zero (the diagnostic list is capped at 1,000 entries)
    - Every `invalidTests` entry separately; these rows were excluded from coverage accounting
-   - Constraints used for the analysis. Constraint-unreachable tuples are removed from the coverage universe, so every tuple returned in `uncovered` is a real miss
-5. If there are real gaps, offer to run `/cover-extend` to generate the minimum additional tests.
+   - The constraints used. Constraint-unreachable tuples are removed from the coverage universe, so every tuple returned in `uncovered` is a real miss
+6. If there are real gaps, offer to run `/cover-extend` to generate the minimum additional tests.
 
 Follow the guidance in the `coverwise` skill for the constraint DSL and common pitfalls.
