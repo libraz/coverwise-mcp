@@ -1,32 +1,32 @@
 #!/usr/bin/env node
 /**
- * claude-coverwise CLI entry point.
+ * coverwise-mcp CLI entry point.
  *
  * With no arguments it starts the stdio MCP server (this is what generated
- * config entries invoke via `npx -y github:libraz/claude-coverwise`). The
+ * config entries invoke via `npx -y github:libraz/coverwise-mcp`). The
  * `init` / `uninstall` subcommands run the interactive install helper.
  */
 import { runInit, runUninstall } from './init.mjs';
+import { PACKAGE_VERSION } from './version.mjs';
 
-const PACKAGE_VERSION = '0.4.0';
-
-const HELP = `claude-coverwise ${PACKAGE_VERSION}
+const HELP = `coverwise-mcp ${PACKAGE_VERSION}
 Pairwise / t-wise combinatorial coverage MCP server.
 
 Usage:
-  claude-coverwise            Start the stdio MCP server.
-  claude-coverwise init       Interactive setup: write the coverwise MCP entry
-                              into Claude Code and/or Codex CLI config files.
-  claude-coverwise uninstall  Interactive removal: drop the coverwise MCP entry
-                              from those config files.
-  claude-coverwise --help     Show this help.
-  claude-coverwise --version  Show version.
+  coverwise-mcp            Start the stdio MCP server.
+  coverwise-mcp init       Interactive setup: write the coverwise MCP entry
+                           into the config files of Claude Code, Codex CLI,
+                           Claude Desktop, Cursor, Cline or Gemini CLI.
+  coverwise-mcp uninstall  Interactive removal: drop the coverwise MCP entry
+                           from those config files.
+  coverwise-mcp --help     Show this help.
+  coverwise-mcp --version  Show version.
 
 Inside Claude Code, prefer the plugin marketplace:
-  /plugin marketplace add libraz/claude-coverwise
-  /plugin install claude-coverwise
+  /plugin marketplace add libraz/coverwise-mcp
+  /plugin install coverwise-mcp
 
-Docs: https://github.com/libraz/claude-coverwise
+Docs: https://github.com/libraz/coverwise-mcp
 `;
 
 const main = async () => {
@@ -54,6 +54,6 @@ const main = async () => {
 
 main().catch((err) => {
   const message = err instanceof Error ? err.message : String(err);
-  process.stderr.write(`[claude-coverwise] ${message}\n`);
+  process.stderr.write(`[coverwise-mcp] ${message}\n`);
   process.exit(1);
 });
