@@ -1,6 +1,6 @@
-# claude-coverwise
+# coverwise-mcp
 
-[![CI](https://img.shields.io/github/actions/workflow/status/libraz/claude-coverwise/ci.yml?branch=main&label=CI)](https://github.com/libraz/claude-coverwise/actions)
+[![CI](https://img.shields.io/github/actions/workflow/status/libraz/coverwise-mcp/ci.yml?branch=main&label=CI)](https://github.com/libraz/coverwise-mcp/actions)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A522-brightgreen?logo=node.js)](https://nodejs.org/)
 [![Yarn](https://img.shields.io/badge/yarn-4-2C8EBB?logo=yarn)](https://yarnpkg.com/)
@@ -11,42 +11,39 @@
 
 Pairwise / t-wise combinatorial coverage for AI-written tests, delivered as a Claude Code plugin.
 
-When Claude writes tests for code that takes multiple parameters — CLI flags, config options, feature flags, query params, form fields, state machines — it often picks a handful of "reasonable" cases and misses interactions. `claude-coverwise` gives Claude the tools and the knowledge to do this properly: build a parameter model, detect uncovered interactions, and generate or extend the minimum test matrix that exercises every combination that matters.
+When Claude writes tests for code that takes multiple parameters — CLI flags, config options, feature flags, query params, form fields, state machines — it often picks a handful of "reasonable" cases and misses interactions. `coverwise-mcp` gives Claude the tools and the knowledge to do this properly: build a parameter model, detect uncovered interactions, and generate or extend the minimum test matrix that exercises every combination that matters.
 
 Under the hood it wraps [**coverwise**](https://github.com/libraz/coverwise), a WASM-first combinatorial test engine, as an MCP server.
 
 ## What's in the box
 
-- **MCP server** exposing the coverwise engine (`generate`, `analyze_coverage`, `extend_tests`, `estimate_model`)
+- **MCP server** exposing the coverwise engine (`pairwise_generate`, `pairwise_analyze`, `pairwise_extend`, `pairwise_estimate`)
 - **Skill** that teaches Claude the constraint DSL, common recipes, and the anti-patterns to avoid
 - **Slash commands** for the three everyday operations:
   - `/cover-check` — analyze the current test file's combinatorial coverage and list gaps
   - `/cover-gen` — build a fresh minimum test matrix for a function or endpoint
   - `/cover-extend` — append the minimum new tests to reach full coverage, leaving existing tests alone
+- **Session hook** that states the applicability rule up front in code checkouts, so a plain "write tests for this" reaches for the tools instead of picking combinations by eye
 
 ## The loop
 
-```mermaid
-graph LR
-    A["AI-written tests"] --> B["/cover-check"]
-    B --> C{"100%?"}
-    C -- No --> D["/cover-extend"]
-    D --> A
-    C -- Yes --> E["Done"]
-    F["New function"] --> G["/cover-gen"]
-    G --> A
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/loop-dark.svg">
+  <img alt="A new function goes through /cover-gen to produce AI-written tests. /cover-check reports their combinatorial coverage; if it is not 100%, /cover-extend appends the missing cases and the loop repeats. At 100% the loop is done." src="assets/loop-light.svg" width="100%">
+</picture>
 
 Most combinatorial tools only support generation. coverwise — and therefore this plugin — treats *analyze* and *extend* as first-class operations, which matches how people (and AIs) actually write tests: iteratively, on top of what's already there.
 
 ## Install
 
 ```
-/plugin marketplace add libraz/claude-coverwise
-/plugin install claude-coverwise
+/plugin marketplace add libraz/coverwise-mcp
+/plugin install coverwise-mcp
 ```
 
-That's it. On the first Claude Code session after installation, a `SessionStart` hook automatically installs the MCP server's runtime dependencies into `${CLAUDE_PLUGIN_DATA}` — a location that survives plugin updates. The install is idempotent and silent on subsequent sessions.
+That's it. On the first Claude Code session after installation, a `SessionStart` hook installs the MCP server's runtime dependencies into `${CLAUDE_PLUGIN_DATA}` — a location that survives plugin updates. The install is idempotent and silent on subsequent sessions.
+
+A second `SessionStart` hook adds a short note to the session context: the four tool names and the rule for when they apply. It only runs where the working directory looks like a code project (`package.json`, `go.mod`, `pyproject.toml`, `Cargo.toml`, `pom.xml`, …) and stays silent everywhere else.
 
 Requirements:
 
@@ -54,33 +51,27 @@ Requirements:
 
 ### For contributors / local development
 
-Clone the repo and install dev dependencies with Yarn 4 (pinned via Volta):
+Clone the repo and install dev dependencies with Yarn 4 (pinned via mise):
 
 ```bash
-git clone https://github.com/libraz/claude-coverwise
-cd claude-coverwise
+git clone https://github.com/libraz/coverwise-mcp
+cd coverwise-mcp
 yarn install
 ```
 
-The pinned toolchain (Node 22.21.1, Yarn 4.12.0) is declared in `package.json` under `volta`. [Volta](https://volta.sh/) will apply it automatically.
+The pinned toolchain (Node 22.23.2, Yarn 4.18.0) is declared in `mise.toml`. Run `mise install` and [mise](https://mise.jdx.dev/) applies it on entering the directory.
 
 ## How it gets invoked
 
-Installing the plugin does **not** mean Claude will reach for it on every test. The plugin is designed to stay out of the way for trivial cases and engage when combinatorial coverage actually matters.
+Installing the plugin does **not** mean Claude will reach for it on every test. It engages when combinatorial coverage actually matters and stays out of the way otherwise. Three mechanisms, in increasing order of explicitness:
 
-**Auto-invoked** — the bundled skill's description matches and Claude decides on its own:
+**1. Session context** — in a code checkout, the `SessionStart` hook states the rule before any request arrives: writing, reviewing or extending tests for something with **≥ 3 independent parameters** means building a parameter model and using the tools. This is what covers the common case — a plain "write tests for this" that mentions nothing about coverage or combinations, which the skill description alone would never match.
 
-- You ask Claude to write tests for a function / component with **≥ 3 independent parameters** (flags, enums, modes, config options, query params, form fields, state machine inputs).
-- You mention "pairwise", "t-wise", "covering array", "combinatorial", or "test matrix".
-- The parameter space is obviously large and a hand-written cartesian product would be unreasonable.
+**2. Skill match** — the bundled skill's description matches when a request already sounds combinatorial: you mention "pairwise", "t-wise", "covering array", "combinatorial" or "test matrix", or the parameter space is obviously too large for a hand-written cartesian product.
 
-**Not auto-invoked** — you'll want to ask or use a slash command:
+Neither fires for tests with only 1–2 parameters, which is correct — pairwise would be overkill. Auditing a suite Claude is not currently working on is also not something it does unprompted; that's what `/cover-check` is for.
 
-- Small tests with only 1–2 parameters (correct behavior — pairwise would be overkill).
-- "Is my existing test suite actually covering everything?" — Claude doesn't audit existing tests unprompted. Run `/cover-check`.
-- Filling gaps in a suite you wrote by hand. Run `/cover-extend`.
-
-**Explicit commands** — always available:
+**3. Slash commands** — always available:
 
 | Command | When to use |
 |---|---|
@@ -88,36 +79,34 @@ Installing the plugin does **not** mean Claude will reach for it on every test. 
 | `/cover-gen [target]` | Build a fresh minimum test matrix for a function / endpoint |
 | `/cover-extend [path]` | Append the minimum new tests to reach full coverage without touching existing ones |
 
-### Make it the default for a project
+### Reinforce it for a project
 
-Drop a few lines into your project's `CLAUDE.md` to nudge Claude to consider coverwise whenever it writes tests in this repo:
+The session hook already states the rule, but a project can restate it in its own `CLAUDE.md` — useful when the repo has a house style for test tables, or when the rule should apply at a lower parameter count:
 
 ```markdown
 ## Testing
 
 When writing tests for functions or components with ≥ 3 input parameters,
-use the coverwise MCP tools (analyze_coverage / generate / extend_tests)
-to verify combinatorial coverage before finishing. Prefer /cover-check for
-auditing existing tests and /cover-extend for filling gaps. See the
-coverwise skill for the constraint DSL.
+use the coverwise MCP tools (pairwise_analyze / pairwise_generate /
+pairwise_extend) to verify combinatorial coverage before finishing. Prefer
+/cover-check for auditing existing tests and /cover-extend for filling gaps.
+See the coverwise skill for the constraint DSL.
 ```
-
-This raises the plugin from "opportunistic" to "default when applicable" for that project, without being so aggressive that it triggers on trivial cases.
 
 ## Example
 
 > *"Write tests for `render(theme, density, locale, dir)` where theme ∈ {light, dark, hc}, density ∈ {compact, cozy}, locale ∈ {en, ja, ar}, dir ∈ {ltr, rtl}. Arabic must be RTL; everything else LTR."*
 
-Claude calls the `generate` tool with:
+Claude calls `pairwise_generate` with the parameter model as a plain map:
 
 ```json
 {
-  "parameters": [
-    { "name": "theme",   "values": ["light", "dark", "hc"] },
-    { "name": "density", "values": ["compact", "cozy"] },
-    { "name": "locale",  "values": ["en", "ja", "ar"] },
-    { "name": "dir",     "values": ["ltr", "rtl"] }
-  ],
+  "model": {
+    "theme":   ["light", "dark", "hc"],
+    "density": ["compact", "cozy"],
+    "locale":  ["en", "ja", "ar"],
+    "dir":     ["ltr", "rtl"]
+  },
   "constraints": [
     "IF locale = ar THEN dir = rtl",
     "IF locale IN {en, ja} THEN dir = ltr"
@@ -125,38 +114,72 @@ Claude calls the `generate` tool with:
 }
 ```
 
-and writes ~9 tests covering every valid 2-way interaction instead of the 36-case cartesian product. The constraint DSL supports `IF/THEN/ELSE`, `AND/OR/NOT`, relational operators, `IN`, and `LIKE` — see the bundled skill for the full grammar and recipes.
+and gets back a table:
+
+```json
+{
+  "columns": ["theme", "density", "locale", "dir"],
+  "rows": [
+    ["hc",    "compact", "ar", "rtl"],
+    ["light", "cozy",    "ar", "rtl"],
+    ["hc",    "cozy",    "ja", "ltr"],
+    ["dark",  "compact", "ar", "rtl"],
+    ["…",     "…",       "…",  "…"]
+  ],
+  "coverage": 1,
+  "strength": 2,
+  "stats": { "totalTuples": 34, "coveredTuples": 34, "testCount": 10 }
+}
+```
+
+10 tests covering every valid 2-way interaction — against 18 combinations the constraints allow, out of a 36-case raw cartesian product. `rows` is positional and in `columns` order, so it drops straight into `test.each` / `t.Run` tables / `pytest.mark.parametrize`. The constraint DSL supports `IF/THEN/ELSE`, `AND/OR/NOT`, relational operators, `IN`, and `LIKE` — see the bundled skill for the full grammar and recipes.
 
 ## MCP tools
 
 | Tool | Purpose |
 |---|---|
-| `generate` | Build a minimal t-wise test suite from parameters + constraints |
-| `analyze_coverage` | Report missing parameter interactions in an existing suite |
-| `extend_tests` | Add the minimum extra tests to reach 100%, preserving existing ones |
-| `estimate_model` | Sanity-check a model (tuple count, estimated tests) before generating |
+| `pairwise_generate` | Build a minimal t-wise test suite from a parameter model + constraints |
+| `pairwise_analyze` | Report the parameter interactions an existing suite never exercises |
+| `pairwise_extend` | Add the minimum extra tests to reach 100%, preserving existing ones |
+| `pairwise_estimate` | Pre-flight sizing (parameters, tuples, estimated tests) without generating |
 
-All tools return structured JSON. Uncovered tuples come with human-readable `display` strings; constraint-unreachable tuples are removed from the coverage universe. Coverage reports include the authoritative `uncoveredCount`, `omittedUncovered` when the 1,000-entry diagnostic list is truncated, and `invalidTests` for existing rows excluded from coverage accounting.
+The model can be given as the `model` map above or as an explicit `parameters` array; test cases are accepted both as `{ param: value }` maps and as positional rows, so the `rows` from one call can be passed straight back into the next. Values come back in the JSON type they were declared with.
+
+All tools return structured JSON. Uncovered tuples come with human-readable `display` strings; constraint-unreachable tuples are removed from the coverage universe. Coverage reports include the authoritative `uncoveredCount`, `omittedUncovered` when the 1,000-entry diagnostic list is truncated, and `invalidTests` for existing rows excluded from coverage accounting. `pairwise_extend` additionally returns `newRows` — just the additions, ready to append to the file — and `before`, the coverage of the suite as it stood, so no separate analyze call is needed to explain them. Values marked `invalid` are kept out of the positive suite and returned as single-fault `negativeRows`, with `negativeCoverage` metrics alongside; models using equivalence classes also get `classCoverage`.
 
 ## Using outside Claude Code
 
-The MCP server is a plain stdio server and works with any MCP client (Codex CLI, Cursor, Cline, Claude Desktop, …). Inside Claude Code, use the plugin marketplace above; everywhere else, the install helper wires the server into your client's config for you.
+The MCP server is a plain stdio server and works with any MCP client. Inside Claude Code, use the plugin marketplace above; everywhere else, the install helper wires the server into your client's config for you.
 
 ### Install helper (recommended)
 
-Run the interactive helper — it writes an `mcpServers.coverwise` entry into the config files you select (Claude Code user `~/.claude.json`, a project-scoped `.mcp.json`, and/or Codex CLI `~/.codex/config.toml`), preserving every other server and key:
+Run the interactive helper — it writes a `coverwise` MCP entry into the config files you select, preserving every other server and key:
 
 ```bash
-npx -y github:libraz/claude-coverwise init
+npx -y github:libraz/coverwise-mcp init
 ```
 
-It prints exactly which files it will touch (`(new)` / `(merge)` / `(replace coverwise)`) and asks for confirmation before writing. To remove the entry again:
+Pick one or more targets (comma-separated, e.g. `1,3`):
+
+| | Client | Config file |
+|---|---|---|
+| 1 | Claude Code | `~/.claude.json` |
+| 2 | Claude Code (project) | `./.mcp.json` |
+| 3 | Codex CLI | `~/.codex/config.toml` |
+| 4 | Claude Desktop | `~/Library/Application Support/Claude/claude_desktop_config.json` |
+| 5 | Cursor | `~/.cursor/mcp.json` |
+| 6 | Cline (VS Code) | `…/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json` |
+| 7 | Gemini CLI | `~/.gemini/settings.json` |
+
+Paths outside the home directory root follow the platform convention (`%APPDATA%` on Windows, `$XDG_CONFIG_HOME` on Linux).
+
+It prints exactly which files it will touch (`(new)` / `(merge)` / `(replace coverwise)`) and asks for confirmation before writing. Each file is rewritten through a temp file and an atomic rename, keeping its current permissions, so a config a running client is reading can never be left half-written. To remove the entry again:
 
 ```bash
-npx -y github:libraz/claude-coverwise uninstall
+npx -y github:libraz/coverwise-mcp uninstall
 ```
 
-The generated entry runs the server via `npx -y github:libraz/claude-coverwise`, so there is nothing to clone or build — npm fetches it on first launch. Restart your MCP client afterwards to pick up the change.
+The generated entry runs the server via `npx -y github:libraz/coverwise-mcp`, so there is nothing to clone or build — npm fetches it on first launch. Restart your MCP client afterwards to pick up the change.
 
 ### Manual config
 
@@ -167,7 +190,7 @@ Prefer to wire it up yourself? Point your client at the bundled launcher:
   "mcpServers": {
     "coverwise": {
       "command": "npx",
-      "args": ["-y", "github:libraz/claude-coverwise"]
+      "args": ["-y", "github:libraz/coverwise-mcp"]
     }
   }
 }
@@ -180,7 +203,7 @@ Or, if you've cloned the repo locally, run `mcp/server.mjs` directly after insta
   "mcpServers": {
     "coverwise": {
       "command": "node",
-      "args": ["/absolute/path/to/claude-coverwise/mcp/server.mjs"]
+      "args": ["/absolute/path/to/coverwise-mcp/mcp/server.mjs"]
     }
   }
 }
@@ -188,7 +211,7 @@ Or, if you've cloned the repo locally, run `mcp/server.mjs` directly after insta
 
 ## About coverwise
 
-The engine underneath is [**coverwise**](https://github.com/libraz/coverwise) v1.3 — a WASM-first C++17 combinatorial test engine with a pure TypeScript fallback, supporting arbitrary t-wise strength, a full constraint solver, validated generation options, negative tests, mixed-strength sub-models, boundary values, and equivalence classes. This plugin is a thin shell that exposes its JS API to Claude Code.
+The engine underneath is [**coverwise**](https://github.com/libraz/coverwise) v1.5 — a WASM-first C++17 combinatorial test engine with a pure TypeScript fallback, supporting arbitrary t-wise strength, a full constraint solver, validated generation options, negative tests, mixed-strength sub-models, boundary values, and equivalence classes. This plugin is a thin shell that exposes its JS API to Claude Code.
 
 ## License
 

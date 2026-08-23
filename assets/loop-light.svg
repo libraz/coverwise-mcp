@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 372" width="940" height="372" role="img" aria-labelledby="title desc">
+  <title id="title">The coverwise-mcp loop</title>
+  <desc id="desc">A new function goes through /cover-gen to produce AI-written tests. /cover-check reports the combinatorial coverage of those tests; if it is not 100 percent, /cover-extend appends the missing cases and the loop repeats. At 100 percent the loop is done.</desc>
+  <style>
+    .n    { font-family: ui-sans-serif, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; font-size: 14px; }
+    .m    { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size: 14px; }
+    .e    { font-family: ui-sans-serif, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; font-size: 12px; }
+    .box  { fill: #F8FAFC; stroke: #CBD5E1; stroke-width: 1; }
+    .cmd  { fill: #EEEFFB; stroke: #B3BAEC; stroke-width: 1; }
+    .dec  { fill: #F8FAFC; stroke: #94A3B8; stroke-width: 1; }
+    .lbl  { fill: #0F172A; }
+    .clbl { fill: #2F3899; }
+    .edge { fill: none; stroke: #94A3B8; stroke-width: 1.5; }
+    .elbl { fill: #64748B; }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#94A3B8"/>
+    </marker>
+  </defs>
+
+  <g class="edge" marker-end="url(#arrow)">
+    <path d="M180,62 H230"/>
+    <path d="M300,84 V170"/>
+    <path d="M385,192 H425"/>
+    <path d="M732,192 H790"/>
+    <path d="M670,232 V300 Q670,310 660,310 H578"/>
+    <path d="M422,310 H310 Q300,310 300,300 V214"/>
+  </g>
+
+  <g class="e elbl">
+    <text x="761" y="183" text-anchor="middle">Yes</text>
+    <text x="682" y="270">No</text>
+  </g>
+
+  <rect class="box" x="40"  y="40"  width="140" height="44" rx="10"/>
+  <rect class="cmd" x="230" y="40"  width="140" height="44" rx="10"/>
+  <rect class="box" x="215" y="170" width="170" height="44" rx="10"/>
+  <rect class="cmd" x="425" y="170" width="150" height="44" rx="10"/>
+  <path class="dec" d="M670,152 L732,192 L670,232 L608,192 Z"/>
+  <rect class="box" x="790" y="170" width="110" height="44" rx="10"/>
+  <rect class="cmd" x="422" y="288" width="156" height="44" rx="10"/>
+
+  <g text-anchor="middle">
+    <text class="n lbl"  x="110" y="67">New function</text>
+    <text class="m clbl" x="300" y="67">/cover-gen</text>
+    <text class="n lbl"  x="300" y="197">AI-written tests</text>
+    <text class="m clbl" x="500" y="197">/cover-check</text>
+    <text class="n lbl"  x="670" y="197">100%?</text>
+    <text class="n lbl"  x="845" y="197">Done</text>
+    <text class="m clbl" x="500" y="315">/cover-extend</text>
+  </g>
+</svg>
