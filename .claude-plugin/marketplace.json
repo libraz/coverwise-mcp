@@ -1,5 +1,5 @@
 {
-  "name": "claude-coverwise",
+  "name": "coverwise-mcp",
   "metadata": {
     "description": "Combinatorial (pairwise / t-wise) test coverage tools for Claude Code."
   },
@@ -10,11 +10,11 @@
   },
   "plugins": [
     {
-      "name": "claude-coverwise",
+      "name": "coverwise-mcp",
       "source": "./",
       "description": "Pairwise / t-wise combinatorial coverage for AI-written tests, powered by the coverwise WASM engine.",
-      "version": "0.4.0",
-      "homepage": "https://github.com/libraz/claude-coverwise",
+      "version": "0.5.0",
+      "homepage": "https://github.com/libraz/coverwise-mcp",
       "license": "Apache-2.0",
       "keywords": ["testing", "pairwise", "t-wise", "combinatorial", "coverage", "mcp"]
     }

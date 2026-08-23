@@ -51,7 +51,7 @@ if (existsSync(rootNodeModules)) {
 
 if (!data) {
   process.stderr.write(
-    '[claude-coverwise] CLAUDE_PLUGIN_DATA not set; cannot install runtime deps.\n',
+    '[coverwise-mcp] CLAUDE_PLUGIN_DATA not set; cannot install runtime deps.\n',
   );
   process.exit(0);
 }
@@ -81,16 +81,16 @@ if (!depsPresent) {
   };
   writeFileSync(pkgDst, `${JSON.stringify(runtimePkg, null, 2)}\n`);
 
-  process.stderr.write('[claude-coverwise] installing runtime dependencies...\n');
+  process.stderr.write('[coverwise-mcp] installing runtime dependencies...\n');
   try {
     execSync('npm install --omit=dev --no-audit --no-fund --loglevel=error', {
       cwd: data,
       stdio: 'inherit',
     });
     writeFileSync(marker, currentVersion);
-    process.stderr.write('[claude-coverwise] dependencies installed.\n');
+    process.stderr.write('[coverwise-mcp] dependencies installed.\n');
   } catch (err) {
-    process.stderr.write(`[claude-coverwise] install failed: ${err?.message ?? err}\n`);
+    process.stderr.write(`[coverwise-mcp] install failed: ${err?.message ?? err}\n`);
     process.exit(0); // Do not block the session on install failure.
   }
 }
@@ -112,7 +112,7 @@ if (!existsSync(rootNodeModules)) {
     symlinkSync(dataNodeModules, rootNodeModules, 'dir');
   } catch (err) {
     process.stderr.write(
-      `[claude-coverwise] failed to symlink node_modules: ${err?.message ?? err}\n`,
+      `[coverwise-mcp] failed to symlink node_modules: ${err?.message ?? err}\n`,
     );
     process.exit(0);
   }

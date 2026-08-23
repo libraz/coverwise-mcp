@@ -25,7 +25,7 @@ const result = spawnSync(process.execPath, [installScript], {
 });
 
 if (result.status !== 0) {
-  process.stderr.write('[claude-coverwise] install-deps failed, aborting launch\n');
+  process.stderr.write('[coverwise-mcp] install-deps failed, aborting launch\n');
   process.exit(result.status ?? 1);
 }
 

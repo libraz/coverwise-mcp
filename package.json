@@ -1,20 +1,20 @@
 {
-  "name": "claude-coverwise",
-  "version": "0.4.0",
+  "name": "coverwise-mcp",
+  "version": "0.5.0",
   "private": true,
   "type": "module",
-  "packageManager": "yarn@4.12.0",
+  "packageManager": "yarn@4.18.0",
   "description": "Claude Code plugin: pairwise / t-wise combinatorial coverage for AI-written tests, backed by the coverwise WASM engine",
   "license": "Apache-2.0",
   "author": "libraz <libraz@libraz.net>",
   "bin": "./mcp/cli.mjs",
-  "homepage": "https://github.com/libraz/claude-coverwise",
+  "homepage": "https://github.com/libraz/coverwise-mcp",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/libraz/claude-coverwise.git"
+    "url": "git+https://github.com/libraz/coverwise-mcp.git"
   },
   "bugs": {
-    "url": "https://github.com/libraz/claude-coverwise/issues"
+    "url": "https://github.com/libraz/coverwise-mcp/issues"
   },
   "keywords": [
     "claude-code",
@@ -36,18 +36,14 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@libraz/coverwise": "^1.3.0",
-    "@modelcontextprotocol/sdk": "^1.29.0"
+    "@libraz/coverwise": "^1.5.0",
+    "@modelcontextprotocol/sdk": "^1.30.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.4",
-    "vitest": "^4.1.10"
+    "@biomejs/biome": "^2.5.10",
+    "vitest": "^4.1.11"
   },
   "engines": {
     "node": ">=22.0.0"
-  },
-  "volta": {
-    "node": "22.21.1",
-    "yarn": "4.12.0"
   }
 }
