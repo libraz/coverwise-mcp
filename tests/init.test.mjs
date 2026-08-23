@@ -5,7 +5,7 @@
  * no interactive prompts. The interactive runInit/runUninstall flows are thin
  * wrappers over these and are covered by the CLI smoke test.
  */
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -14,10 +14,10 @@ import {
   parseTargetChoice,
   previewRemoveImpact,
   previewWriteImpact,
-  removeFromClaudeConfig,
   removeFromCodexConfig,
-  writeClaudeConfig,
+  removeFromJsonConfig,
   writeCodexConfig,
+  writeJsonConfig,
 } from '../mcp/init.mjs';
 
 let dir;
@@ -30,13 +30,13 @@ afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-describe('writeClaudeConfig', () => {
+describe('writeJsonConfig', () => {
   it('creates a fresh config (and parent dirs) when the file is missing', async () => {
     const path = join(dir, 'nested', '.claude.json');
-    await writeClaudeConfig(path);
+    await writeJsonConfig(path);
     const parsed = JSON.parse(await readFile(path, 'utf8'));
     expect(parsed.mcpServers.coverwise.command).toBe('npx');
-    expect(parsed.mcpServers.coverwise.args).toEqual(['-y', 'github:libraz/claude-coverwise']);
+    expect(parsed.mcpServers.coverwise.args).toEqual(['-y', 'github:libraz/coverwise-mcp']);
   });
 
   it('preserves other servers and unrelated top-level keys', async () => {
@@ -48,7 +48,7 @@ describe('writeClaudeConfig', () => {
         mcpServers: { notcoverwise: { command: 'foo', args: ['bar'] } },
       }),
     );
-    await writeClaudeConfig(path);
+    await writeJsonConfig(path);
     const parsed = JSON.parse(await readFile(path, 'utf8'));
     expect(parsed.otherTopLevel).toEqual({ keep: true });
     expect(parsed.mcpServers.notcoverwise.command).toBe('foo');
@@ -58,7 +58,22 @@ describe('writeClaudeConfig', () => {
   it('throws on malformed existing JSON rather than clobbering it', async () => {
     const path = join(dir, '.claude.json');
     await writeFile(path, '{ not json');
-    await expect(writeClaudeConfig(path)).rejects.toThrow(/Failed to parse/);
+    await expect(writeJsonConfig(path)).rejects.toThrow(/Failed to parse/);
+    expect(await readFile(path, 'utf8')).toBe('{ not json');
+  });
+
+  it('carries over the existing file mode instead of widening it', async () => {
+    const path = join(dir, '.claude.json');
+    await writeFile(path, '{}');
+    await chmod(path, 0o600);
+    await writeJsonConfig(path);
+    expect((await stat(path)).mode & 0o777).toBe(0o600);
+  });
+
+  it('leaves no temp file behind', async () => {
+    const path = join(dir, '.claude.json');
+    await writeJsonConfig(path);
+    expect(await readdir(dir)).toEqual(['.claude.json']);
   });
 });
 
@@ -69,7 +84,7 @@ describe('writeCodexConfig', () => {
     const toml = await readFile(path, 'utf8');
     expect(toml).toContain('[mcp_servers.coverwise]');
     expect(toml).toContain('command = "npx"');
-    expect(toml).toContain('args = ["-y", "github:libraz/claude-coverwise"]');
+    expect(toml).toContain('args = ["-y", "github:libraz/coverwise-mcp"]');
   });
 
   it('replaces an existing coverwise block while keeping other sections', async () => {
@@ -91,9 +106,33 @@ describe('writeCodexConfig', () => {
     expect(toml).not.toContain('command = "old"');
     expect(toml.match(/\[mcp_servers\.coverwise\]/g)).toHaveLength(1);
   });
+
+  it('drops a hand-written env sub-table that would collide with the new block', async () => {
+    const path = join(dir, 'config.toml');
+    await writeFile(
+      path,
+      [
+        '  [mcp_servers.coverwise]',
+        'command = "old"',
+        '',
+        '[mcp_servers.coverwise.env]',
+        'FOO = "bar"',
+        '',
+        '[mcp_servers.other]',
+        'command = "x"',
+        '',
+      ].join('\n'),
+    );
+    await writeCodexConfig(path);
+    const toml = await readFile(path, 'utf8');
+    expect(toml).not.toContain('coverwise.env');
+    expect(toml).not.toContain('FOO = "bar"');
+    expect(toml).toContain('[mcp_servers.other]');
+    expect(toml.match(/\[mcp_servers\.coverwise\]/g)).toHaveLength(1);
+  });
 });
 
-describe('removeFromClaudeConfig', () => {
+describe('removeFromJsonConfig', () => {
   it('removes only the coverwise entry and reports the outcome', async () => {
     const path = join(dir, '.claude.json');
     await writeFile(
@@ -105,7 +144,7 @@ describe('removeFromClaudeConfig', () => {
         },
       }),
     );
-    expect(await removeFromClaudeConfig(path)).toBe('removed');
+    expect(await removeFromJsonConfig(path)).toBe('removed');
     const parsed = JSON.parse(await readFile(path, 'utf8'));
     expect(parsed.mcpServers.coverwise).toBeUndefined();
     expect(parsed.mcpServers.keep).toBeDefined();
@@ -114,11 +153,11 @@ describe('removeFromClaudeConfig', () => {
   it('reports absent when coverwise is not present', async () => {
     const path = join(dir, '.claude.json');
     await writeFile(path, JSON.stringify({ mcpServers: { keep: {} } }));
-    expect(await removeFromClaudeConfig(path)).toBe('absent');
+    expect(await removeFromJsonConfig(path)).toBe('absent');
   });
 
   it('reports no-file when the config does not exist', async () => {
-    expect(await removeFromClaudeConfig(join(dir, 'missing.json'))).toBe('no-file');
+    expect(await removeFromJsonConfig(join(dir, 'missing.json'))).toBe('no-file');
   });
 });
 
@@ -146,6 +185,29 @@ describe('removeFromCodexConfig', () => {
     const path = join(dir, 'config.toml');
     await writeFile(path, '[mcp_servers.other]\ncommand = "x"\n');
     expect(await removeFromCodexConfig(path)).toBe('absent');
+  });
+
+  it('removes sub-tables along with the main block', async () => {
+    const path = join(dir, 'config.toml');
+    await writeFile(
+      path,
+      [
+        '[mcp_servers.coverwise]',
+        'command = "npx"',
+        '',
+        '[mcp_servers.coverwise.env]',
+        'FOO = "bar"',
+        '',
+        '[mcp_servers.other]',
+        'command = "x"',
+        '',
+      ].join('\n'),
+    );
+    expect(await removeFromCodexConfig(path)).toBe('removed');
+    const toml = await readFile(path, 'utf8');
+    expect(toml).not.toContain('coverwise');
+    expect(toml).not.toContain('FOO = "bar"');
+    expect(toml).toContain('[mcp_servers.other]');
   });
 });
 
@@ -179,6 +241,18 @@ describe('parseTargetChoice', () => {
 
   it('deduplicates and preserves recognized tokens', () => {
     expect(parseTargetChoice('2,2,1', '1')).toEqual(['claude-project', 'claude-user']);
+  });
+
+  it('recognizes every supported client', () => {
+    expect(parseTargetChoice('1,2,3,4,5,6,7', '1')).toEqual([
+      'claude-user',
+      'claude-project',
+      'codex',
+      'claude-desktop',
+      'cursor',
+      'cline',
+      'gemini',
+    ]);
   });
 
   it('throws on an unrecognized token', () => {
