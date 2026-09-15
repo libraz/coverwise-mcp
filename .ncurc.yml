@@ -1,0 +1,11 @@
+# Packages `ncu -u` must not raise, and why. Drop an entry once its blocker is
+# gone so the next run picks the package up again.
+#
+# Nothing is held right now — this file records that the list was checked, not
+# that it was never maintained.
+reject: []
+
+# Yarn refuses to install versions younger than npmMinimalAgeGate (24h by
+# default), so proposing them here would only produce an uninstallable
+# package.json.
+cooldown: 1d
