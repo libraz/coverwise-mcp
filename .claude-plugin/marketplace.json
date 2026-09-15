@@ -13,7 +13,7 @@
       "name": "coverwise-mcp",
       "source": "./",
       "description": "Pairwise / t-wise combinatorial coverage for AI-written tests, powered by the coverwise WASM engine.",
-      "version": "0.5.0",
+      "version": "0.5.1",
       "homepage": "https://github.com/libraz/coverwise-mcp",
       "license": "Apache-2.0",
       "keywords": ["testing", "pairwise", "t-wise", "combinatorial", "coverage", "mcp"]
