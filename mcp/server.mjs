@@ -107,14 +107,15 @@ const parameterSchema = {
 
 const parametersSchema = {
   type: 'array',
-  description: 'Explicit parameter list. Use `model` instead unless a tool refuses the shorthand.',
+  description:
+    'Explicit parameter list, required unless `model` is given. Use `model` instead unless a tool refuses the shorthand.',
   items: parameterSchema,
 };
 
 const modelSchema = {
   type: 'object',
   description:
-    'Parameter model as a { paramName: values } map — the preferred input form. A value list is an array; a numeric parameter can instead be { "type": "integer", "range": [min, max] } to get boundary values injected. Example: { "os": ["win", "mac"], "retries": { "type": "integer", "range": [0, 5] }, "verbose": [true, false] }.',
+    'Parameter model as a { paramName: values } map — the preferred input form, required unless `parameters` is given. A value list is an array; a numeric parameter can instead be { "type": "integer", "range": [min, max] } to get boundary values injected. Example: { "os": ["win", "mac"], "retries": { "type": "integer", "range": [0, 5] }, "verbose": [true, false] }.',
   minProperties: 1,
   additionalProperties: {
     oneOf: [
@@ -223,10 +224,16 @@ const generateInputFields = {
   },
 };
 
-/** Either input form satisfies the model requirement. */
-const requiresModel = [{ required: ['model'] }, { required: ['parameters'] }];
-
 // --- Tool definitions ---------------------------------------------------
+//
+// A tool takes its parameter model as either `model` or `parameters`, and the
+// natural way to say "exactly one of these" is a top-level `anyOf`. It cannot
+// be written here: a client whose backing API rejects top-level schema
+// combinators drops the tool outright, and since the server still connects and
+// still answers tools/list, the loss shows up as four tools that were never
+// registered rather than as an error. The requirement is stated in each field's
+// description and enforced by resolveParameters, which rejects both forms at
+// once and neither of them.
 
 const tools = [
   {
@@ -236,7 +243,6 @@ const tools = [
     inputSchema: {
       type: 'object',
       properties: generateInputFields,
-      anyOf: requiresModel,
     },
   },
   {
@@ -250,7 +256,6 @@ const tools = [
         tests: { ...testCasesSchema, description: 'Test cases to analyze.' },
       },
       required: ['tests'],
-      anyOf: requiresModel,
     },
   },
   {
@@ -273,7 +278,6 @@ const tools = [
         ...generateInputFields,
       },
       required: ['existing'],
-      anyOf: requiresModel,
     },
   },
   {
@@ -286,7 +290,6 @@ const tools = [
         ...modelInputFields,
         subModels: subModelsSchema,
       },
-      anyOf: requiresModel,
     },
   },
 ];

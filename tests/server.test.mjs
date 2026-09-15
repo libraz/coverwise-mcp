@@ -93,11 +93,13 @@ describe('coverwise-mcp MCP server', () => {
       expect(tool.description).toBeTruthy();
       expect(tool.inputSchema).toBeDefined();
       expect(tool.inputSchema.type).toBe('object');
-      // Either input form satisfies the model requirement.
-      expect(tool.inputSchema.anyOf).toEqual([
-        { required: ['model'] },
-        { required: ['parameters'] },
-      ]);
+      // A top-level schema combinator makes a client drop the tool while the
+      // server still connects and still lists it, so the tool goes missing with
+      // nothing to read anywhere. The model/parameters requirement it would
+      // express lives in resolveParameters instead.
+      for (const keyword of ['anyOf', 'oneOf', 'allOf', 'not']) {
+        expect(tool.inputSchema[keyword]).toBeUndefined();
+      }
       expect(tool.inputSchema.properties.model).toBeDefined();
     }
 
