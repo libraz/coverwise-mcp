@@ -3,7 +3,7 @@
   "version": "0.5.1",
   "private": true,
   "type": "module",
-  "packageManager": "yarn@4.18.0",
+  "packageManager": "yarn@4.18.1",
   "description": "Claude Code plugin: pairwise / t-wise combinatorial coverage for AI-written tests, backed by the coverwise WASM engine",
   "license": "Apache-2.0",
   "author": "libraz <libraz@libraz.net>",
@@ -37,12 +37,12 @@
   },
   "dependencies": {
     "@libraz/coverwise": "^1.6.2",
-    "@modelcontextprotocol/sdk": "^1.30.0"
+    "@modelcontextprotocol/sdk": "^1.32.2"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.13",
-    "vite": "^8.3.0",
-    "vitest": "^5.0.0"
+    "@biomejs/biome": "^2.6.3",
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5"
   },
   "engines": {
     "node": ">=22.0.0"
