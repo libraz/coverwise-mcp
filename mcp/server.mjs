@@ -460,12 +460,20 @@ function toCoverageReport(report, testCount, strength) {
   };
 }
 
-/** Shape a generate/extend result; `rowFields` carries the suite rows to return. */
+/**
+ * Shape a generate/extend result; `rowFields` carries the suite rows to return.
+ * The engine's `stats.testCount` adds the negative rows in, while its tuple
+ * counts describe the positive suite alone, so the count is restated here as
+ * positive rows to keep every `stats` field about the same suite.
+ */
 function toSuitePayload(result, columns, decoders, rowFields) {
   const payload = {
     columns,
     ...rowFields,
-    ...toCoverageFields(result),
+    ...toCoverageFields({
+      ...result,
+      stats: { ...result.stats, testCount: result.tests?.length ?? 0 },
+    }),
     warnings: result.warnings,
   };
   if (result.negativeTests?.length) {

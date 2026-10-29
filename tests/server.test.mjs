@@ -735,6 +735,14 @@ describe('high-level input and output shapes', () => {
     expect(payload.negativeRows.some((row) => row[qtyIndex] === -1)).toBe(true);
   });
 
+  it('counts only positive rows in stats.testCount', async () => {
+    const { payload } = await call('pairwise_generate', {
+      model: { retries: { type: 'integer', range: [0, 3] }, verbose: [true, false] },
+    });
+    expect(payload.negativeRows.length).toBeGreaterThan(0);
+    expect(payload.stats.testCount).toBe(payload.rows.length);
+  });
+
   it('rejects a parameter whose values collide once stringified', async () => {
     // Type restoration maps an engine token back to its declared value, which
     // only works because 1 and "1" cannot coexist in one parameter. Pin that

@@ -105,7 +105,7 @@ Translate the two arrays differently: `rows` assert the success path, `negativeR
 }
 ```
 
-Every tool reports coverage in this same shape: `coverage`, `strength`, `stats`, and `uncovered` as display strings such as `"os=linux, browser=safari"`. When `maxTests` stops generation short, pass the returned `rows` to `pairwise_extend` to get the minimal set of additions.
+Every tool reports coverage in this same shape: `coverage`, `strength`, `stats`, and `uncovered` as display strings such as `"os=linux, browser=safari"`. Every `stats` field describes the positive suite; `testCount` does not include `negativeRows`. When `maxTests` stops generation short, pass the returned `rows` to `pairwise_extend` to get the minimal set of additions.
 
 Values come back in the JSON type they were declared with — `0`, not `"0"`; `true`, not `"true"` — so a row can be emitted into test code as-is.
 
