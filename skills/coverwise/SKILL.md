@@ -56,7 +56,7 @@ An explicit `parameters: [{name, values}, ...]` array is still accepted, but pas
 
 ### Boundary value expansion
 
-A numeric parameter declared with `type` (`"integer"` or `"float"`) and `range: [min, max]` expands to `min-1, min, min+1, max-1, max, max+1` (spaced by `step`, default `1.0`, for `"float"`) — the off-by-one neighbours that catch most boundary bugs. Any explicit `values` you list are kept alongside the generated boundaries. Prefer this over passing a long literal list.
+A numeric parameter declared with `type` (`"integer"` or `"float"`) and `range: [min, max]` expands to `min-1, min, min+1, max-1, max, max+1` (spaced by `step`, default `1.0`, for `"float"`) — the off-by-one neighbours that catch most boundary bugs. The two outside the range (`min-1`, `max+1`) are invalid: they come back in `negativeRows`, never in `rows`, so assert rejection for them. Any explicit `values` you list are kept alongside the generated boundaries with their own `invalid` flag. Prefer this over passing a long literal list.
 
 ### Equivalence classes
 
@@ -101,12 +101,11 @@ Translate the two arrays differently: `rows` assert the success path, `negativeR
   "uncovered": [],
   "uncoveredCount": 0,
   "omittedUncovered": 0,
-  "warnings": [],
-  "suggestions": []
+  "warnings": []
 }
 ```
 
-Every tool reports coverage in this same shape: `coverage`, `strength`, `stats`, and `uncovered` as display strings such as `"os=linux, browser=safari"`. When `maxTests` stops generation short, `suggestions` lists `{ description, row }` entries, one per missing tuple; prefer `pairwise_extend` for the minimal set of additions.
+Every tool reports coverage in this same shape: `coverage`, `strength`, `stats`, and `uncovered` as display strings such as `"os=linux, browser=safari"`. When `maxTests` stops generation short, pass the returned `rows` to `pairwise_extend` to get the minimal set of additions.
 
 Values come back in the JSON type they were declared with — `0`, not `"0"`; `true`, not `"true"` — so a row can be emitted into test code as-is.
 

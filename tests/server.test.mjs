@@ -312,11 +312,12 @@ describe('coverwise-mcp MCP server', () => {
       },
     });
     const out = parseResult(result);
+    // integer boundary expansion of [1, 100] → 0,1,2,99,100,101; the two
+    // outside the range are invalid and only appear in negative rows.
     const qtys = new Set(asMaps(out).map((t) => String(t.qty)));
-    // integer boundary expansion of [1, 100] → 0,1,2,99,100,101
-    for (const expected of ['0', '1', '2', '99', '100', '101']) {
-      expect(qtys.has(expected)).toBe(true);
-    }
+    expect([...qtys].sort()).toEqual(['1', '100', '2', '99']);
+    const negativeQtys = new Set(out.negativeRows.map((row) => String(row[0])));
+    expect([...negativeQtys].sort()).toEqual(['0', '101']);
   });
 
   it('pairwise_generate reports class coverage when values carry equivalence classes', async () => {
@@ -669,9 +670,10 @@ describe('high-level input and output shapes', () => {
       model: { qty: { type: 'integer', range: [1, 100] }, flag: ['on', 'off'] },
     });
     const qtys = new Set(asMaps(payload).map((row) => row.qty));
-    for (const expected of [0, 1, 2, 99, 100, 101]) {
-      expect(qtys.has(expected)).toBe(true);
-    }
+    expect([...qtys].sort((a, b) => a - b)).toEqual([1, 2, 99, 100]);
+    expect(payload.negativeRows.map((row) => row[0]).sort((a, b) => a - b)).toEqual([
+      0, 0, 101, 101,
+    ]);
   });
 
   it('returns values in the JSON type they were declared with', async () => {
@@ -693,21 +695,6 @@ describe('high-level input and output shapes', () => {
     });
     for (const row of asMaps(payload)) {
       expect(Number.isInteger(row.qty)).toBe(true);
-    }
-  });
-
-  it('returns suggestions as typed positional rows', async () => {
-    const { payload } = await call('pairwise_generate', {
-      model: { os: ['linux', 'mac', 'win'], n: [1, 2, 3], verbose: [true, false] },
-      maxTests: 2,
-    });
-    expect(payload.coverage).toBeLessThan(1);
-    expect(payload.suggestions.length).toBeGreaterThan(0);
-    for (const { description, row } of payload.suggestions) {
-      expect(typeof description).toBe('string');
-      expect(row).toHaveLength(3);
-      expect(typeof row[1]).toBe('number');
-      expect(typeof row[2]).toBe('boolean');
     }
   });
 

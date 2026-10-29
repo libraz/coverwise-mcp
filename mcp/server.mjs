@@ -467,10 +467,6 @@ function toSuitePayload(result, columns, decoders, rowFields) {
     ...rowFields,
     ...toCoverageFields(result),
     warnings: result.warnings,
-    suggestions: (result.suggestions ?? []).map(({ description, testCase }) => ({
-      description,
-      row: columns.map((name) => decoders[name](testCase[name])),
-    })),
   };
   if (result.negativeTests?.length) {
     payload.negativeRows = toRows(result.negativeTests, columns, decoders);

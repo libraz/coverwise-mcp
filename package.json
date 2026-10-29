@@ -36,7 +36,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@libraz/coverwise": "^1.6.2",
+    "@libraz/coverwise": "^1.6.3",
     "@modelcontextprotocol/sdk": "^1.32.2"
   },
   "devDependencies": {

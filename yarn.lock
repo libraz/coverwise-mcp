@@ -158,10 +158,10 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@libraz/coverwise@npm:^1.6.2":
-  version: 1.6.2
-  resolution: "@libraz/coverwise@npm:1.6.2"
-  checksum: 10c0/9dc5e5a549bd6a9f7596cd599d1a680e8b59b6b4fcab8cd95170e0cd47e24ec0ce08f0b64ce442e4a43dee79502813c54ff2fd9b45f2f4b21d7563532c12b405
+"@libraz/coverwise@npm:^1.6.3":
+  version: 1.6.3
+  resolution: "@libraz/coverwise@npm:1.6.3"
+  checksum: 10c0/320584dfb8d2ced5aff1acf98677ec0555392e35dddb2b3282d62879f1c50a88b693665170e941234aee4a9f4e118cac8f98550a44cc11d3ce564ffffcf40a87
   languageName: node
   linkType: hard
 
@@ -533,7 +533,7 @@ __metadata:
   resolution: "coverwise-mcp@workspace:."
   dependencies:
     "@biomejs/biome": "npm:^2.6.3"
-    "@libraz/coverwise": "npm:^1.6.2"
+    "@libraz/coverwise": "npm:^1.6.3"
     "@modelcontextprotocol/sdk": "npm:^1.32.2"
     vite: "npm:^8.3.5"
     vitest: "npm:^5.0.5"
