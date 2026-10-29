@@ -190,9 +190,10 @@ const generateInputFields = {
     description: 'Unsigned 32-bit RNG seed for deterministic output.',
   },
   weights: weightsSchema,
-  seeds: {
+  requiredRows: {
     ...testCasesSchema,
-    description: 'Mandatory seed test cases that must appear in the generated suite.',
+    description:
+      'Test cases that must appear in the generated suite, such as a known regression case. Unrelated to the RNG `seed`.',
   },
   subModels: subModelsSchema,
   maxTests: {
@@ -243,12 +244,6 @@ const tools = [
         existing: {
           ...testCasesSchema,
           description: 'Test cases already written — will be preserved as-is.',
-        },
-        mode: {
-          type: 'string',
-          enum: ['strict'],
-          default: 'strict',
-          description: 'Preserve every existing test verbatim and append only new rows.',
         },
         ...generateInputFields,
       },
@@ -550,14 +545,20 @@ function toErrorPayload(err) {
   return payload;
 }
 
-/** Options common to generate and extend, with the resolved model spliced in. */
+/** Engine options for generate and extend, picked from the tool arguments by name. */
 function toEngineOptions(args, parameters, columns) {
-  const { model: _model, existing: _existing, ...rest } = args;
-  const options = { ...rest, parameters };
-  if (options.seeds !== undefined) {
-    options.seeds = toTestMaps(options.seeds, columns, 'seeds');
-  }
-  return options;
+  const { constraints, strength, seed, weights, subModels, maxTests, requiredRows } = args;
+  return {
+    parameters,
+    constraints,
+    strength,
+    seed,
+    weights,
+    subModels,
+    maxTests,
+    seeds:
+      requiredRows === undefined ? undefined : toTestMaps(requiredRows, columns, 'requiredRows'),
+  };
 }
 
 const toolNames = new Set(tools.map((tool) => tool.name));
@@ -593,8 +594,8 @@ function runTool(name, args) {
       return { ...payload, before: analyzeExisting(parameters, existing, args) };
     }
     case 'pairwise_estimate': {
-      const { model: _model, ...rest } = args;
-      return estimateModel({ ...rest, parameters });
+      const { constraints, strength, subModels } = args;
+      return estimateModel({ parameters, constraints, strength, subModels });
     }
     default:
       throw new Error(`Unknown tool: ${name}`);

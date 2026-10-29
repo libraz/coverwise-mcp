@@ -224,7 +224,7 @@ Rule of thumb: use the same `constraints` array across `pairwise_analyze` / `pai
 ## Input validation and guarantees
 
 - `strength` must be a positive integer and cannot exceed the usable model strength. Pairwise generation therefore needs at least two parameters.
-- `seed` and `maxTests` must be unsigned 32-bit integers. Weights must be finite and positive, seed rows must contain exactly the model parameters, and sub-models must name valid parameters with a valid strength.
+- `seed` and `maxTests` must be unsigned 32-bit integers. Weights must be finite and positive, `requiredRows` must contain exactly the model parameters, and sub-models must name valid parameters with a valid strength.
 - All public surfaces return structured `INVALID_INPUT` errors for invalid options. Repeat the offending field and message instead of retrying with silently altered input.
 - `pairwise_extend` uses strict mode: existing rows are preserved verbatim, and only the additions are returned, as `newRows`.
 

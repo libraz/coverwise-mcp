@@ -327,7 +327,6 @@ describe('coverwise-mcp MCP server', () => {
       name: 'pairwise_extend',
       arguments: {
         existing,
-        mode: 'strict',
         model: { a: ['1', '2'], b: ['x', 'y'] },
         seed: 7,
       },
@@ -423,7 +422,7 @@ describe('coverwise-mcp MCP server', () => {
       arguments: {
         model: boundaryModel(),
         weights: { flag: { on: 2 } },
-        seeds: [{ qty: 1, flag: 'on' }],
+        requiredRows: [{ qty: 1, flag: 'on' }],
         subModels: [{ parameters: ['qty', 'flag'], strength: 2 }],
         maxTests: 0,
       },
@@ -444,7 +443,7 @@ describe('coverwise-mcp MCP server', () => {
         constraints: ['IF a = 1 THEN b = x'],
         seed: 29,
         weights: { a: { 1: 2 } },
-        seeds: [{ a: '1', b: 'x' }],
+        requiredRows: [{ a: '1', b: 'x' }],
         subModels: [{ parameters: ['a', 'b'], strength: 2 }],
         maxTests: 0,
       },
@@ -517,31 +516,34 @@ describe('coverwise-mcp MCP server', () => {
   });
 
   it.each([
-    { scenario: 'constraints + seed + default mode', constraints: true, seed: 31 },
-    { scenario: 'no constraints or seed + default mode' },
-    { scenario: 'constraints + no seed + strict mode', constraints: true, mode: 'strict' },
-  ])('covers pairwise_extend interaction: $scenario', async ({ constraints, seed, mode }) => {
-    const existing = [
-      { a: '1', b: 'x' },
-      { a: '2', b: 'y' },
-    ];
-    const args = { existing, model: discreteModel() };
-    if (constraints) {
-      args.constraints = ['IF a = 1 THEN b = x'];
-    }
-    if (seed !== undefined) {
-      args.seed = seed;
-    }
-    if (mode !== undefined) {
-      args.mode = mode;
-    }
+    { scenario: 'constraints + seed', constraints: true, seed: 31 },
+    { scenario: 'no constraints or seed' },
+    { scenario: 'constraints + required row + no seed', constraints: true, requiredRow: true },
+  ])(
+    'covers pairwise_extend interaction: $scenario',
+    async ({ constraints, seed, requiredRow }) => {
+      const existing = [
+        { a: '1', b: 'x' },
+        { a: '2', b: 'y' },
+      ];
+      const args = { existing, model: discreteModel() };
+      if (constraints) {
+        args.constraints = ['IF a = 1 THEN b = x'];
+      }
+      if (seed !== undefined) {
+        args.seed = seed;
+      }
+      if (requiredRow) {
+        args.requiredRows = [['1', 'x']];
+      }
 
-    const result = await client.callTool({ name: 'pairwise_extend', arguments: args });
-    const out = parseResult(result);
-    expect(result.isError).toBeFalsy();
-    expect(out.coverage).toBe(1);
-    await expectExtensionCovers(client, discreteModel(), existing, out, args.constraints);
-  });
+      const result = await client.callTool({ name: 'pairwise_extend', arguments: args });
+      const out = parseResult(result);
+      expect(result.isError).toBeFalsy();
+      expect(out.coverage).toBe(1);
+      await expectExtensionCovers(client, discreteModel(), existing, out, args.constraints);
+    },
+  );
 
   it.each([
     {
@@ -703,6 +705,14 @@ describe('high-level input and output shapes', () => {
     });
     expect(payload.negativeRows.length).toBeGreaterThan(0);
     expect(payload.stats.testCount).toBe(payload.rows.length);
+  });
+
+  it('places requiredRows in the generated suite', async () => {
+    const { payload } = await call('pairwise_generate', {
+      model: { os: ['win', 'mac', 'linux'], retries: [0, 3], verbose: [true, false] },
+      requiredRows: [['linux', 3, false]],
+    });
+    expect(payload.rows).toContainEqual(['linux', 3, false]);
   });
 
   it('rejects a parameter whose values collide once stringified', async () => {
