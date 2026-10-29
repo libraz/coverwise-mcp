@@ -137,7 +137,7 @@ const modelSchema = {
 const constraintsSchema = {
   type: 'array',
   description:
-    'Constraint DSL strings (e.g. "IF os = macOS THEN browser != IE"). See the coverwise skill for grammar.',
+    'Constraints, AND-ed together. Grammar: `[IF cond THEN] cond [ELSE cond]`; a cond compares a parameter with `=`, `!=`, `<`, `<=`, `>`, `>=`, `IN {a, b}` or `LIKE pre*`, and combines with NOT > AND > OR plus parentheses. Keywords, names and values are case-insensitive; quote values with spaces or symbols ("us-east-1"). Examples: "IF os = mac THEN browser != ie", "IF plan IN {free, trial} THEN seats <= 5", "browser != ie". Pass the same list to every tool for the same model.',
   items: { type: 'string' },
 };
 
@@ -285,7 +285,7 @@ const tools = [
   {
     name: 'pairwise_estimate',
     description:
-      'Pre-flight sizing only: report parameter count, total t-tuples and estimated test count WITHOUT generating anything. Worth a call when the model is large (roughly 8 or more parameters, or a parameter with many values) and a tuple explosion needs catching first. For ordinary models skip it — pairwise_generate already returns the same counts in `stats`.',
+      'Pre-flight sizing only: report parameter count and the raw t-tuple count WITHOUT generating anything. Worth a call when the model is large (roughly 8 or more parameters, or a parameter with many values) and a tuple explosion needs catching first. `estimatedTests` is a coarse heuristic, not a bound in either direction, and often well above what pairwise_generate produces — never report it as the suite size. For ordinary models skip this tool: pairwise_generate returns the real counts in `stats`.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -394,6 +394,30 @@ function buildDecoders(parameters) {
   return decoders;
 }
 
+/**
+ * Build a predicate telling whether an engine-returned value is invalid for
+ * `param`: a declared value (or alias) marked `invalid`, or a boundary value the
+ * expansion generated outside `range`. A declared value keeps its own flag even
+ * outside the range, matching the engine.
+ */
+function buildInvalidCheck(param) {
+  const declared = new Map();
+  for (const entry of param.values ?? []) {
+    const spec = entry && typeof entry === 'object' ? entry : { value: entry };
+    for (const name of [spec.value, ...(spec.aliases ?? [])]) {
+      declared.set(String(name), spec.invalid === true);
+    }
+  }
+  const [min, max] = param.range ?? [];
+  return (raw) => {
+    const text = String(raw);
+    if (declared.has(text)) {
+      return declared.get(text);
+    }
+    return param.range !== undefined && (Number(text) < min || Number(text) > max);
+  };
+}
+
 // --- Suite shape conversion ----------------------------------------------
 
 /** Accept both { paramName: value } maps and positional rows on input. */
@@ -461,14 +485,27 @@ function toCoverageReport(report, testCount, strength) {
 }
 
 /**
+ * Single-fault negative rows, each tagged with the parameter holding its one
+ * invalid value so a test can assert that specific rejection.
+ */
+function toNegativeRows(cases, parameters, decoders) {
+  const columns = parameters.map((param) => param.name);
+  const checks = parameters.map(buildInvalidCheck);
+  return cases.map((testCase) => ({
+    invalid: columns.find((name, i) => checks[i](testCase[name])),
+    row: columns.map((name) => decoders[name](testCase[name])),
+  }));
+}
+
+/**
  * Shape a generate/extend result; `rowFields` carries the suite rows to return.
  * The engine's `stats.testCount` adds the negative rows in, while its tuple
  * counts describe the positive suite alone, so the count is restated here as
  * positive rows to keep every `stats` field about the same suite.
  */
-function toSuitePayload(result, columns, decoders, rowFields) {
+function toSuitePayload(result, parameters, decoders, rowFields) {
   const payload = {
-    columns,
+    columns: parameters.map((param) => param.name),
     ...rowFields,
     ...toCoverageFields({
       ...result,
@@ -477,31 +514,54 @@ function toSuitePayload(result, columns, decoders, rowFields) {
     warnings: result.warnings,
   };
   if (result.negativeTests?.length) {
-    payload.negativeRows = toRows(result.negativeTests, columns, decoders);
-    payload.negativeCoverage = result.negativeCoverage;
+    payload.negativeRows = toNegativeRows(result.negativeTests, parameters, decoders);
+    const { coverageRatio, totalTuples, coveredTuples, omittedTuples } = result.negativeCoverage;
+    payload.negativeCoverage = {
+      coverage: coverageRatio,
+      totalTuples,
+      coveredTuples,
+      omittedTuples,
+    };
   }
   if (result.classCoverage) {
-    payload.classCoverage = result.classCoverage;
+    const { classCoverageRatio, totalClassTuples, coveredClassTuples } = result.classCoverage;
+    payload.classCoverage = {
+      coverage: classCoverageRatio,
+      totalTuples: totalClassTuples,
+      coveredTuples: coveredClassTuples,
+    };
   }
   return payload;
 }
 
+const isScalar = (value) => value === null || typeof value !== 'object';
+
+/** An array of scalars, or an object whose fields are scalars or such arrays. */
+function isFlat(value) {
+  if (Array.isArray(value)) {
+    return value.every(isScalar);
+  }
+  return Object.values(value).every(
+    (field) => isScalar(field) || (Array.isArray(field) && field.every(isScalar)),
+  );
+}
+
 /**
  * Serialize a tool result for the model reading it. Objects are indented, but an
- * array of scalars stays on one line and an array of arrays gets one row per
- * line, so a suite costs about one line per test instead of one per value.
+ * array of scalars stays on one line and each flat row or entry of an array gets
+ * one line, so a suite costs about one line per test instead of one per value.
  */
 function formatJson(value, indent = '') {
-  if (value === null || typeof value !== 'object') {
+  if (isScalar(value)) {
     return JSON.stringify(value);
   }
   const inner = `${indent}  `;
   if (Array.isArray(value)) {
-    if (value.every((item) => item === null || typeof item !== 'object')) {
+    if (value.every(isScalar)) {
       return JSON.stringify(value);
     }
     const items = value.map((item) =>
-      Array.isArray(item) ? JSON.stringify(item) : formatJson(item, inner),
+      isFlat(item) ? JSON.stringify(item) : formatJson(item, inner),
     );
     return `[\n${items.map((item) => inner + item).join(',\n')}\n${indent}]`;
   }
@@ -550,7 +610,7 @@ function runTool(name, args) {
     case 'pairwise_generate': {
       const decoders = buildDecoders(parameters);
       const result = generate(toEngineOptions(args, parameters, columns));
-      return toSuitePayload(result, columns, decoders, {
+      return toSuitePayload(result, parameters, decoders, {
         rows: toRows(result.tests, columns, decoders),
       });
     }
@@ -564,7 +624,7 @@ function runTool(name, args) {
       const existing = toTestMaps(args.existing, columns, 'existing');
       const result = extendTests(existing, toEngineOptions(args, parameters, columns));
       const kept = Array.isArray(existing) ? existing.length : 0;
-      const payload = toSuitePayload(result, columns, decoders, {
+      const payload = toSuitePayload(result, parameters, decoders, {
         newRows: toRows(result.tests.slice(kept), columns, decoders),
       });
       return { ...payload, before: analyzeExisting(parameters, existing, args) };

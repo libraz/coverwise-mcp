@@ -316,8 +316,11 @@ describe('coverwise-mcp MCP server', () => {
     // outside the range are invalid and only appear in negative rows.
     const qtys = new Set(asMaps(out).map((t) => String(t.qty)));
     expect([...qtys].sort()).toEqual(['1', '100', '2', '99']);
-    const negativeQtys = new Set(out.negativeRows.map((row) => String(row[0])));
+    const negativeQtys = new Set(out.negativeRows.map(({ row }) => String(row[0])));
     expect([...negativeQtys].sort()).toEqual(['0', '101']);
+    for (const { invalid } of out.negativeRows) {
+      expect(invalid).toBe('qty');
+    }
   });
 
   it('pairwise_generate reports class coverage when values carry equivalence classes', async () => {
@@ -340,8 +343,8 @@ describe('coverwise-mcp MCP server', () => {
     });
     const out = parseResult(result);
     expect(out.classCoverage).toBeDefined();
-    expect(out.classCoverage.classCoverageRatio).toBe(1);
-    expect(out.classCoverage.coveredClassTuples).toBe(out.classCoverage.totalClassTuples);
+    expect(out.classCoverage.coverage).toBe(1);
+    expect(out.classCoverage.coveredTuples).toBe(out.classCoverage.totalTuples);
   });
 
   it('pairwise_extend preserves existing tests and reaches full coverage', async () => {
@@ -671,7 +674,7 @@ describe('high-level input and output shapes', () => {
     });
     const qtys = new Set(asMaps(payload).map((row) => row.qty));
     expect([...qtys].sort((a, b) => a - b)).toEqual([1, 2, 99, 100]);
-    expect(payload.negativeRows.map((row) => row[0]).sort((a, b) => a - b)).toEqual([
+    expect(payload.negativeRows.map(({ row }) => row[0]).sort((a, b) => a - b)).toEqual([
       0, 0, 101, 101,
     ]);
   });
@@ -729,10 +732,34 @@ describe('high-level input and output shapes', () => {
     });
     expect(payload.negativeRows.length).toBeGreaterThan(0);
     const qtyIndex = payload.columns.indexOf('qty');
-    for (const row of payload.negativeRows) {
+    for (const { row } of payload.negativeRows) {
       expect(typeof row[qtyIndex]).toBe('number');
     }
-    expect(payload.negativeRows.some((row) => row[qtyIndex] === -1)).toBe(true);
+    expect(payload.negativeRows.some(({ row }) => row[qtyIndex] === -1)).toBe(true);
+    expect(payload.negativeCoverage.coverage).toBe(1);
+  });
+
+  it('names the parameter holding the invalid value of each negative row', async () => {
+    const { result, payload } = await call('pairwise_generate', {
+      model: {
+        qty: [1, 50, { value: -1, invalid: true }],
+        fmt: ['json', { value: 'xml', aliases: ['xml1'], invalid: true }],
+        retries: { type: 'integer', range: [0, 3] },
+      },
+    });
+    const faults = new Set();
+    for (const { invalid, row } of payload.negativeRows) {
+      const value = row[payload.columns.indexOf(invalid)];
+      const expected = { qty: [-1], fmt: ['xml', 'xml1'], retries: [-1, 4] }[invalid];
+      expect(expected).toContain(value);
+      faults.add(invalid);
+    }
+    expect([...faults].sort()).toEqual(['fmt', 'qty', 'retries']);
+    // Each negative row is printed on a line of its own.
+    const lines = result.content[0].text.split('\n').map((line) => line.trim().replace(/,$/, ''));
+    for (const entry of payload.negativeRows) {
+      expect(lines).toContain(JSON.stringify(entry));
+    }
   });
 
   it('counts only positive rows in stats.testCount', async () => {

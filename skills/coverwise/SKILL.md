@@ -60,7 +60,7 @@ A numeric parameter declared with `type` (`"integer"` or `"float"`) and `range: 
 
 ### Equivalence classes
 
-When several values are interchangeable for the behavior under test (every 4xx is "client error"), tag them with the same `class`. The result then carries a `classCoverage` block (`totalClassTuples`, `coveredClassTuples`, `classCoverageRatio`), which lets you argue "all error categories are covered" without exhaustively testing every status code.
+When several values are interchangeable for the behavior under test (every 4xx is "client error"), tag them with the same `class`. The result then carries a `classCoverage` block (`coverage`, `totalTuples`, `coveredTuples`) over class tuples, which lets you argue "all error categories are covered" without exhaustively testing every status code.
 
 ```json
 {
@@ -84,7 +84,7 @@ Tag a value with `invalid: true` when it is supposed to make the system under te
 { "model": { "qty": [1, 50, { "value": -1, "invalid": true }] } }
 ```
 
-Invalid values are kept out of the positive suite. They come back in a separate `negativeRows` array, built single-fault: each row carries exactly one invalid value with every other parameter valid, so a failing test points at one cause. The result then also carries `negativeCoverage` (`totalTuples`, `coveredTuples`, `omittedTuples`, `coverageRatio`).
+Invalid values are kept out of the positive suite. They come back in a separate `negativeRows` array, built single-fault: each row carries exactly one invalid value with every other parameter valid, so a failing test points at one cause. Each entry is `{ "invalid": "qty", "row": [-1, "json", "a"] }` — `invalid` names the parameter holding the fault, so the test can assert the rejection that parameter should produce. The result then also carries `negativeCoverage` (`coverage`, `totalTuples`, `coveredTuples`, `omittedTuples`).
 
 Translate the two arrays differently: `rows` assert the success path, `negativeRows` assert the specific rejection (error code, exception, status). Never merge them into one loop that expects success.
 
