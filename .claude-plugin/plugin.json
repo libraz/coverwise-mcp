@@ -1,6 +1,6 @@
 {
   "name": "coverwise-mcp",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Pairwise / t-wise combinatorial coverage checker for AI-written tests. Wraps the coverwise WASM engine as an MCP server plus a skill that teaches the constraint DSL.",
   "author": {
     "name": "libraz",
