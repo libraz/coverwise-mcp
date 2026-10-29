@@ -32,7 +32,7 @@ Typical shapes: CLI flags, REST query params, feature flag matrices, form valida
    - New suite → `pairwise_generate`
    - Reviewing or finishing an existing suite → `pairwise_analyze`
    - Filling gaps while keeping the current tests → `pairwise_extend`
-4. **Verify** `coverage` (generate/extend) or `coverageRatio` (analyze) is `1.0`. If not, report `uncoveredCount` as the authoritative total, every returned `uncovered[].display`, and `omittedUncovered` when diagnostics were truncated. Constraint-unreachable tuples are removed from the coverage universe and never appear in `uncovered`.
+4. **Verify** `coverage` is `1.0`. If not, report `uncoveredCount` as the authoritative total, every returned `uncovered` entry, and `omittedUncovered` when diagnostics were truncated. Constraint-unreachable tuples are removed from the coverage universe and never appear in `uncovered`.
 5. **Translate to the target framework.** The result is `columns` (parameter names) plus `rows` (positional values, in their declared JSON types). That maps 1:1 onto a table-driven test — `test.each` in vitest/jest, `pytest.mark.parametrize`, a Go table `[]struct`. Emit the rows as the table and write one body that consumes them.
 
 Skip `pairwise_estimate` for ordinary models: `pairwise_generate` already reports the same counts in `stats`. Reach for it only when the model is large (roughly 8+ parameters, or a parameter with many values) and a tuple explosion needs catching before it happens.
@@ -90,7 +90,7 @@ Translate the two arrays differently: `rows` assert the success path, `negativeR
 
 ## Reading the result
 
-`pairwise_generate` and `pairwise_extend` return:
+`pairwise_generate` returns:
 
 ```json
 {
@@ -106,37 +106,32 @@ Translate the two arrays differently: `rows` assert the success path, `negativeR
 }
 ```
 
+Every tool reports coverage in this same shape: `coverage`, `strength`, `stats`, and `uncovered` as display strings such as `"os=linux, browser=safari"`. When `maxTests` stops generation short, `suggestions` lists `{ description, row }` entries, one per missing tuple; prefer `pairwise_extend` for the minimal set of additions.
+
 Values come back in the JSON type they were declared with — `0`, not `"0"`; `true`, not `"true"` — so a row can be emitted into test code as-is.
 
-`pairwise_extend` adds two fields:
+`pairwise_extend` returns `newRows` in place of `rows`, plus `before`:
 
-- `newRows` — only the appended rows, ready to add to the file. No slicing arithmetic needed; existing rows are preserved verbatim at the head of `rows` in their original order.
+- `newRows` — only the appended rows, ready to add to the file. The existing rows are preserved verbatim ahead of them and are not echoed back.
 - `before` — the coverage diagnostics of the suite as it stood. Use it to explain why the additions exist; a separate `pairwise_analyze` call is unnecessary.
 
-An existing row that does not match the model is kept in `rows` all the same, and `warnings` names the offending value (`value '9' is not declared by parameter a`). Report that row: it stays in the file, but it does not count toward coverage, so the additions were sized as if it were not there.
+An existing row that does not match the model is kept in the suite all the same, and `warnings` names the offending value (`value '9' is not declared by parameter a`). Report that row: it stays in the file, but it does not count toward coverage, so the additions were sized as if it were not there.
 
-`pairwise_analyze` returns the diagnostics directly:
+`pairwise_analyze` returns the same coverage fields plus `invalidTests`:
 
 ```json
 {
-  "totalTuples": 36,
-  "coveredTuples": 32,
-  "coverageRatio": 0.888,
+  "coverage": 0.888,
+  "strength": 2,
+  "stats": { "totalTuples": 36, "coveredTuples": 32, "testCount": 7 },
+  "uncovered": ["os=linux, browser=safari"],
   "uncoveredCount": 4,
   "omittedUncovered": 3,
-  "invalidTests": [],
-  "uncovered": [
-    {
-      "tuple": ["os=linux", "browser=safari"],
-      "params": ["os", "browser"],
-      "reason": "never covered",
-      "display": "os=linux, browser=safari"
-    }
-  ]
+  "invalidTests": []
 }
 ```
 
-Report back in the `display` form — it is the shortest faithful description of what is missing. `uncovered` is capped at 1,000 diagnostic entries, so always report `uncoveredCount` as the authoritative total and `omittedUncovered` when it is non-zero. Report `invalidTests` separately; those rows were excluded from coverage accounting.
+Report the `uncovered` strings as they are — each is the shortest faithful description of what is missing. `uncovered` is capped at 1,000 diagnostic entries, so always report `uncoveredCount` as the authoritative total and `omittedUncovered` when it is non-zero. Report `invalidTests` separately; those rows were excluded from coverage accounting.
 
 ## Passing existing tests in
 
@@ -223,7 +218,7 @@ IF region = "us-east-1" THEN provider = aws
 
 When the parameter model has constraints, **pass them to `pairwise_analyze` too** — not just to `pairwise_generate`. Without constraints, the analyzer cannot know that some tuples are impossible and will report them as `never covered`, polluting the "what's missing" list.
 
-With constraints supplied, impossible tuples are **removed from the coverage universe entirely** — including partial tuples that do not directly violate a constraint but cannot be extended to any valid complete test. They do not appear in `totalTuples`, `coveredTuples`, or `uncovered`. This matches the generator's semantics, so analyzing a suite that `pairwise_generate` produced for the same model + constraints yields `coverageRatio === 1.0`.
+With constraints supplied, impossible tuples are **removed from the coverage universe entirely** — including partial tuples that do not directly violate a constraint but cannot be extended to any valid complete test. They do not appear in `stats.totalTuples`, `stats.coveredTuples`, or `uncovered`. This matches the generator's semantics, so analyzing a suite that `pairwise_generate` produced for the same model + constraints yields `coverage === 1.0`.
 
 Rule of thumb: use the same `constraints` array across `pairwise_analyze` / `pairwise_generate` / `pairwise_extend` for the same model.
 
@@ -232,7 +227,7 @@ Rule of thumb: use the same `constraints` array across `pairwise_analyze` / `pai
 - `strength` must be a positive integer and cannot exceed the usable model strength. Pairwise generation therefore needs at least two parameters.
 - `seed` and `maxTests` must be unsigned 32-bit integers. Weights must be finite and positive, seed rows must contain exactly the model parameters, and sub-models must name valid parameters with a valid strength.
 - All public surfaces return structured `INVALID_INPUT` errors for invalid options. Repeat the offending field and message instead of retrying with silently altered input.
-- `pairwise_extend` uses strict mode: existing rows are preserved verbatim at the head of `rows`, and the additions are also returned separately as `newRows`.
+- `pairwise_extend` uses strict mode: existing rows are preserved verbatim, and only the additions are returned, as `newRows`.
 
 ## Error codes
 

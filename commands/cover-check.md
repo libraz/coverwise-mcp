@@ -19,7 +19,7 @@ Steps:
    - `strength`: 2 unless the user specified otherwise
 5. Report:
    - Current coverage ratio
-   - The authoritative `uncoveredCount`, plus every returned tuple using its `display` string
+   - The authoritative `uncoveredCount`, plus every returned `uncovered` string
    - `omittedUncovered` when non-zero (the diagnostic list is capped at 1,000 entries)
    - Every `invalidTests` entry separately; these rows were excluded from coverage accounting
    - The constraints used. Constraint-unreachable tuples are removed from the coverage universe, so every tuple returned in `uncovered` is a real miss

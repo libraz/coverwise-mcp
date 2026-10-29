@@ -145,7 +145,7 @@ Claude は `pairwise_generate` を、パラメータモデルを素のマップ�
 
 モデルは上記の `model` マップでも、明示的な `parameters` 配列でも渡せます。テストケースは `{ パラメータ名: 値 }` のマップと位置配列の両方を受け付けるため、あるツールが返した `rows` をそのまま次のツールに渡せます。値は宣言時の JSON 型のまま返ります。
 
-すべてのツールは構造化 JSON を返します。未カバー tuple には人間可読な `display` 文字列が付き、制約上到達不能な tuple はカバレッジ母集団から除外されます。カバレッジレポートには未カバー総数 `uncoveredCount`、診断リストが 1,000 件で打ち切られた場合の `omittedUncovered`、カバレッジ計算から除外された既存行を示す `invalidTests` が含まれます。`pairwise_extend` はさらに、追加分だけを取り出してそのままファイル末尾に足せる `newRows` と、追加前のカバレッジ `before` を返すので、追加理由の説明に別途 analyze を呼ぶ必要はありません。`invalid` を付けた値は正常系スイートから除外され、単一障害の `negativeRows` として `negativeCoverage` の指標とともに返されます。同値クラスを使ったモデルでは `classCoverage` も付きます。
+すべてのツールは構造化 JSON を返し、カバレッジを共通の形（`coverage`、`stats`、`"os=linux, browser=safari"` のような表示文字列で並ぶ未カバー tuple）で報告します。制約上到達不能な tuple はカバレッジ母集団から除外されます。カバレッジレポートには未カバー総数 `uncoveredCount`、診断リストが 1,000 件で打ち切られた場合の `omittedUncovered`、カバレッジ計算から除外された既存行を示す `invalidTests` が含まれます。`pairwise_extend` はさらに、追加分だけを取り出してそのままファイル末尾に足せる `newRows` と、追加前のカバレッジ `before` を返すので、追加理由の説明に別途 analyze を呼ぶ必要はありません。`invalid` を付けた値は正常系スイートから除外され、単一障害の `negativeRows` として `negativeCoverage` の指標とともに返されます。同値クラスを使ったモデルでは `classCoverage` も付きます。
 
 ## Claude Code 以外での利用
 

@@ -46,6 +46,17 @@ function asMaps(out) {
   return out.rows.map((row) => Object.fromEntries(out.columns.map((name, i) => [name, row[i]])));
 }
 
+/** Assert that the existing rows plus an extension's `newRows` reach full coverage. */
+async function expectExtensionCovers(client, parameters, existing, out, constraints) {
+  const result = await client.callTool({
+    name: 'pairwise_analyze',
+    arguments: { parameters, constraints, tests: [...existing, ...out.newRows] },
+  });
+  const report = parseResult(result);
+  expect(report.coverage).toBe(1);
+  expect(report.invalidTests).toEqual([]);
+}
+
 const discreteParameters = () => [
   { name: 'a', values: ['1', '2'] },
   { name: 'b', values: ['x', 'y'] },
@@ -193,13 +204,13 @@ describe('coverwise-mcp MCP server', () => {
       },
     });
     const report = parseResult(result);
-    expect(report.totalTuples).toBe(4);
-    expect(report.coveredTuples).toBe(2);
-    expect(report.uncovered).toHaveLength(2);
+    expect(report.stats).toEqual({ totalTuples: 4, coveredTuples: 2, testCount: 2 });
+    expect(report.strength).toBe(2);
+    expect(report.uncovered).toEqual(['a=1, b=y', 'a=2, b=x']);
     expect(report.uncoveredCount).toBe(2);
     expect(report.omittedUncovered).toBe(0);
     expect(report.invalidTests).toEqual([]);
-    expect(report.coverageRatio).toBeCloseTo(0.5, 5);
+    expect(report.coverage).toBeCloseTo(0.5, 5);
   });
 
   it('pairwise_analyze with constraints removes impossible tuples from the universe', async () => {
@@ -219,19 +230,11 @@ describe('coverwise-mcp MCP server', () => {
     });
     const report = parseResult(result);
     // Without constraints: 6 tuples. With constraints: 6 - 3 impossible = 3.
-    expect(report.totalTuples).toBe(3);
-    expect(report.coveredTuples).toBe(2);
-    // The single uncovered tuple must be locale=ja × dir=ltr (the only valid one not exercised).
-    expect(report.uncovered).toHaveLength(1);
-    const u = report.uncovered[0];
-    expect(u.tuple).toEqual(expect.arrayContaining(['locale=ja', 'dir=ltr']));
-    // No constraint-impossible tuple should appear in uncovered.
-    for (const entry of report.uncovered) {
-      const flat = entry.tuple.join(',');
-      expect(flat).not.toMatch(/locale=en.*dir=rtl|dir=rtl.*locale=en/);
-      expect(flat).not.toMatch(/locale=ja.*dir=rtl|dir=rtl.*locale=ja/);
-      expect(flat).not.toMatch(/locale=ar.*dir=ltr|dir=ltr.*locale=ar/);
-    }
+    expect(report.stats.totalTuples).toBe(3);
+    expect(report.stats.coveredTuples).toBe(2);
+    // The single uncovered tuple must be locale=ja × dir=ltr (the only valid one
+    // not exercised); no constraint-impossible tuple may appear.
+    expect(report.uncovered).toEqual(['locale=ja, dir=ltr']);
   });
 
   it('constraint solver excludes partial tuples that cannot extend to a valid complete test', async () => {
@@ -254,8 +257,8 @@ describe('coverwise-mcp MCP server', () => {
       arguments: { parameters, constraints, tests: suite.rows },
     });
     const report = parseResult(analyzed);
-    expect(report.coverageRatio).toBe(1);
-    expect(report.totalTuples).toBe(9);
+    expect(report.coverage).toBe(1);
+    expect(report.stats.totalTuples).toBe(9);
     expect(report.uncoveredCount).toBe(0);
     expect(report.uncovered).toEqual([]);
   });
@@ -272,7 +275,7 @@ describe('coverwise-mcp MCP server', () => {
       },
     });
     const report = parseResult(result);
-    expect(report.coverageRatio).toBe(0);
+    expect(report.coverage).toBe(0);
     expect(report.invalidTests).toHaveLength(1);
     expect(report.invalidTests[0].testIndex).toBe(0);
     expect(report.invalidTests[0].reason).toMatch(/parameter b/i);
@@ -292,7 +295,7 @@ describe('coverwise-mcp MCP server', () => {
       },
     });
     const report = parseResult(result);
-    expect(report.coverageRatio).toBe(0);
+    expect(report.coverage).toBe(0);
     expect(report.uncoveredCount).toBe(1600);
     expect(report.uncovered).toHaveLength(1000);
     expect(report.omittedUncovered).toBe(600);
@@ -359,13 +362,14 @@ describe('coverwise-mcp MCP server', () => {
     });
     const out = parseResult(result);
     expect(out.coverage).toBe(1);
-    const suite = asMaps(out);
-    expect(suite.length).toBeGreaterThanOrEqual(existing.length);
-    expect(suite.slice(0, existing.length)).toEqual(existing);
-    // The additions are isolated so the caller never has to slice by hand.
-    expect(out.newRows).toEqual(out.rows.slice(existing.length));
+    // Only the additions come back; the caller already holds the existing rows.
+    expect(out.rows).toBeUndefined();
+    expect(out.stats.testCount).toBe(existing.length + out.newRows.length);
+    await expectExtensionCovers(client, discreteParameters(), existing, out);
     // Coverage of the suite as it stood, folded in to save an analyze call.
-    expect(out.before.coverageRatio).toBeCloseTo(0.5, 5);
+    expect(out.before.coverage).toBeCloseTo(0.5, 5);
+    expect(out.before.stats.testCount).toBe(existing.length);
+    expect(out.before.uncovered).toEqual(['a=1, b=y', 'a=2, b=x']);
     expect(out.before.uncoveredCount).toBe(2);
   });
 
@@ -512,7 +516,7 @@ describe('coverwise-mcp MCP server', () => {
       },
     });
     const report = parseResult(result);
-    expect(report.coverageRatio).toBe(1);
+    expect(report.coverage).toBe(1);
     expect(report.uncoveredCount).toBe(0);
     expect(report.invalidTests).toEqual([]);
   });
@@ -527,7 +531,7 @@ describe('coverwise-mcp MCP server', () => {
       },
     });
     const report = parseResult(result);
-    expect(report.coverageRatio).toBe(0);
+    expect(report.coverage).toBe(0);
     expect(report.invalidTests).toHaveLength(1);
     expect(report.invalidTests[0].testIndex).toBe(0);
   });
@@ -546,7 +550,7 @@ describe('coverwise-mcp MCP server', () => {
       },
     });
     const report = parseResult(result);
-    expect(report.coverageRatio).toBe(0);
+    expect(report.coverage).toBe(0);
     expect(report.uncoveredCount).toBe(1600);
     expect(report.uncovered).toHaveLength(1000);
     expect(report.omittedUncovered).toBe(600);
@@ -576,7 +580,7 @@ describe('coverwise-mcp MCP server', () => {
     const out = parseResult(result);
     expect(result.isError).toBeFalsy();
     expect(out.coverage).toBe(1);
-    expect(asMaps(out).slice(0, existing.length)).toEqual(existing);
+    await expectExtensionCovers(client, discreteParameters(), existing, out, args.constraints);
   });
 
   it.each([
@@ -692,6 +696,42 @@ describe('high-level input and output shapes', () => {
     }
   });
 
+  it('returns suggestions as typed positional rows', async () => {
+    const { payload } = await call('pairwise_generate', {
+      model: { os: ['linux', 'mac', 'win'], n: [1, 2, 3], verbose: [true, false] },
+      maxTests: 2,
+    });
+    expect(payload.coverage).toBeLessThan(1);
+    expect(payload.suggestions.length).toBeGreaterThan(0);
+    for (const { description, row } of payload.suggestions) {
+      expect(typeof description).toBe('string');
+      expect(row).toHaveLength(3);
+      expect(typeof row[1]).toBe('number');
+      expect(typeof row[2]).toBe('boolean');
+    }
+  });
+
+  it('prints each suite row on a single line', async () => {
+    const { result, payload } = await call('pairwise_generate', {
+      model: { os: ['win', 'mac'], browser: ['chrome', 'safari'], retries: [0, 3] },
+    });
+    const lines = result.content[0].text.split('\n').map((line) => line.trim().replace(/,$/, ''));
+    for (const row of payload.rows) {
+      expect(lines).toContain(JSON.stringify(row));
+    }
+    expect(lines).toContain('"columns": ["os","browser","retries"]');
+  });
+
+  it('reports errors as code, message and detail only', async () => {
+    const { result, payload } = await call('pairwise_generate', {
+      model: { os: ['linux', 'mac'], fmt: ['json', 'text'] },
+      constraints: ['IF os = windows THEN fmt = json'],
+    });
+    expect(result.isError).toBe(true);
+    expect(Object.keys(payload).sort()).toEqual(['code', 'detail', 'message']);
+    expect(payload.code).toBe('CONSTRAINT_ERROR');
+  });
+
   it('restores types on negative rows too', async () => {
     const { payload } = await call('pairwise_generate', {
       model: {
@@ -728,7 +768,7 @@ describe('high-level input and output shapes', () => {
     };
     const generated = await call('pairwise_generate', { model, seed: 3 });
     const analyzed = await call('pairwise_analyze', { model, tests: generated.payload.rows });
-    expect(analyzed.payload.coverageRatio).toBe(1);
+    expect(analyzed.payload.coverage).toBe(1);
     expect(analyzed.payload.invalidTests).toEqual([]);
   });
 
@@ -742,11 +782,11 @@ describe('high-level input and output shapes', () => {
       ],
     });
     expect(payload.coverage).toBe(1);
-    expect(payload.rows.slice(0, 2)).toEqual([
-      ['1', 'x'],
-      ['2', 'y'],
-    ]);
-    expect(payload.newRows).toEqual(payload.rows.slice(2));
+    expect(payload.columns).toEqual(['a', 'b']);
+    expect(payload.newRows.length).toBeGreaterThan(0);
+    for (const row of payload.newRows) {
+      expect(row).toHaveLength(2);
+    }
     expect(payload.before.uncoveredCount).toBe(2);
   });
 

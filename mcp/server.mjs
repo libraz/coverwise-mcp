@@ -10,8 +10,10 @@
  * a parameter model can be written as a plain `{ name: [values] }` map,
  * suites travel as `columns` + positional `rows` (which map straight onto a
  * table-driven test and cost fewer tokens than repeating key names), values
- * come back in the JSON types they were declared with, and the extend tool
- * carries the diagnostics that would otherwise need a second analyze call.
+ * come back in the JSON types they were declared with, every tool reports
+ * coverage in one shape with uncovered tuples as display strings, and the
+ * extend tool carries the diagnostics that would otherwise need a second
+ * analyze call.
  */
 import { analyzeCoverage, estimateModel, extendTests, generate, init } from '@libraz/coverwise';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -248,7 +250,7 @@ const tools = [
   {
     name: 'pairwise_analyze',
     description:
-      "USE BEFORE calling a test suite finished, whenever the code under test takes 3 or more independent parameters. Reports which parameter interactions an EXISTING (AI- or hand-written) suite never exercises: `uncovered` diagnostics (capped at 1000 entries), the authoritative `uncoveredCount`, `omittedUncovered`, and `invalidTests` for rows that do not match the model. Reading the test file cannot answer this question; this tool can. Pass `constraints` when the model has them — tuples that cannot extend to a valid complete test are removed from the coverage universe, matching the generator's semantics.",
+      "USE BEFORE calling a test suite finished, whenever the code under test takes 3 or more independent parameters. Reports which parameter interactions an EXISTING (AI- or hand-written) suite never exercises, in the same coverage shape pairwise_generate returns: `coverage`, `stats`, `uncovered` as display strings (capped at 1000 entries), the authoritative `uncoveredCount`, `omittedUncovered`, plus `invalidTests` for rows that do not match the model. Reading the test file cannot answer this question; this tool can. Pass `constraints` when the model has them — tuples that cannot extend to a valid complete test are removed from the coverage universe, matching the generator's semantics.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -261,7 +263,7 @@ const tools = [
   {
     name: 'pairwise_extend',
     description:
-      'USE when tests already exist and must be kept as they are. Appends the minimum extra rows needed to reach full t-wise coverage, preserving every existing row verbatim at the head of the suite. Returns `newRows` (just the additions, ready to append to the file), the full `rows`, and `before` — the coverage diagnostics of the suite as it stands today — so no separate pairwise_analyze call is needed to explain why the additions exist.',
+      'USE when tests already exist and must be kept as they are. Appends the minimum extra rows needed to reach full t-wise coverage, preserving every existing row verbatim at the head of the suite. Returns `newRows` (just the additions, ready to append to the file) and `before` — the coverage diagnostics of the suite as it stands today — so no separate pairwise_analyze call is needed to explain why the additions exist.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -418,20 +420,57 @@ function toRows(cases, columns, decoders) {
   return (cases ?? []).map((testCase) => columns.map((name) => decoders[name](testCase[name])));
 }
 
-/** Shape a generate/extend result into the columns + rows payload. */
-function toSuitePayload(result, columns, decoders, afterRows = {}) {
-  const payload = {
-    columns,
-    rows: toRows(result.tests, columns, decoders),
-    ...afterRows,
+/** Uncovered diagnostics as their display strings, the only field a reader acts on. */
+function toDisplays(uncovered) {
+  return (uncovered ?? []).map((entry) => entry.display);
+}
+
+/**
+ * Coverage fields shared by every tool result. An engine CoverageReport carries
+ * the same numbers as a GenerateResult under different names, so analyze and
+ * extend's `before` are mapped onto the generate shape here.
+ */
+function toCoverageFields(result) {
+  return {
     coverage: result.coverage,
     strength: result.strength,
     stats: result.stats,
-    uncovered: result.uncovered,
+    uncovered: toDisplays(result.uncovered),
     uncoveredCount: result.uncoveredCount,
     omittedUncovered: result.omittedUncovered,
+  };
+}
+
+/** Shape an engine CoverageReport for `testCount` analyzed rows. */
+function toCoverageReport(report, testCount, strength) {
+  return {
+    ...toCoverageFields({
+      coverage: report.coverageRatio,
+      uncovered: report.uncovered,
+      uncoveredCount: report.uncoveredCount,
+      omittedUncovered: report.omittedUncovered,
+      strength,
+      stats: {
+        totalTuples: report.totalTuples,
+        coveredTuples: report.coveredTuples,
+        testCount,
+      },
+    }),
+    invalidTests: report.invalidTests,
+  };
+}
+
+/** Shape a generate/extend result; `rowFields` carries the suite rows to return. */
+function toSuitePayload(result, columns, decoders, rowFields) {
+  const payload = {
+    columns,
+    ...rowFields,
+    ...toCoverageFields(result),
     warnings: result.warnings,
-    suggestions: result.suggestions,
+    suggestions: (result.suggestions ?? []).map(({ description, testCase }) => ({
+      description,
+      row: columns.map((name) => decoders[name](testCase[name])),
+    })),
   };
   if (result.negativeTests?.length) {
     payload.negativeRows = toRows(result.negativeTests, columns, decoders);
@@ -443,19 +482,45 @@ function toSuitePayload(result, columns, decoders, afterRows = {}) {
   return payload;
 }
 
+/**
+ * Serialize a tool result for the model reading it. Objects are indented, but an
+ * array of scalars stays on one line and an array of arrays gets one row per
+ * line, so a suite costs about one line per test instead of one per value.
+ */
+function formatJson(value, indent = '') {
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value);
+  }
+  const inner = `${indent}  `;
+  if (Array.isArray(value)) {
+    if (value.every((item) => item === null || typeof item !== 'object')) {
+      return JSON.stringify(value);
+    }
+    const items = value.map((item) =>
+      Array.isArray(item) ? JSON.stringify(item) : formatJson(item, inner),
+    );
+    return `[\n${items.map((item) => inner + item).join(',\n')}\n${indent}]`;
+  }
+  const entries = Object.entries(value).filter(([, item]) => item !== undefined);
+  if (entries.length === 0) {
+    return '{}';
+  }
+  const fields = entries.map(
+    ([key, item]) => `${inner}${JSON.stringify(key)}: ${formatJson(item, inner)}`,
+  );
+  return `{\n${fields.join(',\n')}\n${indent}}`;
+}
+
 // --- Call dispatch ------------------------------------------------------
 
 function toErrorPayload(err) {
-  // CoverwiseError carries a structured `code` (and optional `detail`); preserve
-  // its enumerable fields. `message` lives on Error as a non-enumerable property,
-  // so JSON.stringify would drop it unless we copy it onto the payload explicitly.
-  if (err && typeof err === 'object' && 'code' in err) {
-    return { ...err, message: err.message ? String(err.message) : String(err) };
+  // CoverwiseError carries a structured `code` and an optional `detail`.
+  const code = err && typeof err === 'object' && 'code' in err ? err.code : 'INVALID_INPUT';
+  const payload = { code, message: err?.message ? String(err.message) : String(err) };
+  if (err?.detail) {
+    payload.detail = err.detail;
   }
-  return {
-    code: 'INVALID_INPUT',
-    message: err?.message ? String(err.message) : String(err),
-  };
+  return payload;
 }
 
 /** Options common to generate and extend, with the resolved model spliced in. */
@@ -480,15 +545,15 @@ function runTool(name, args) {
   switch (name) {
     case 'pairwise_generate': {
       const decoders = buildDecoders(parameters);
-      return toSuitePayload(
-        generate(toEngineOptions(args, parameters, columns)),
-        columns,
-        decoders,
-      );
+      const result = generate(toEngineOptions(args, parameters, columns));
+      return toSuitePayload(result, columns, decoders, {
+        rows: toRows(result.tests, columns, decoders),
+      });
     }
     case 'pairwise_analyze': {
       const tests = toTestMaps(args.tests, columns, 'tests');
-      return analyzeCoverage(parameters, tests, args.strength, args.constraints);
+      const report = analyzeCoverage(parameters, tests, args.strength, args.constraints);
+      return toCoverageReport(report, tests?.length ?? 0, args.strength ?? 2);
     }
     case 'pairwise_extend': {
       const decoders = buildDecoders(parameters);
@@ -516,7 +581,8 @@ function runTool(name, args) {
  */
 function analyzeExisting(parameters, existing, args) {
   try {
-    return analyzeCoverage(parameters, existing, args.strength, args.constraints);
+    const report = analyzeCoverage(parameters, existing, args.strength, args.constraints);
+    return toCoverageReport(report, existing.length, args.strength ?? 2);
   } catch {
     return undefined;
   }
@@ -529,14 +595,10 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       content: [
         {
           type: 'text',
-          text: JSON.stringify(
-            {
-              code: 'INVALID_INPUT',
-              message: `coverwise WASM init failed: ${initError?.message ?? initError}`,
-            },
-            null,
-            2,
-          ),
+          text: formatJson({
+            code: 'INVALID_INPUT',
+            message: `coverwise WASM init failed: ${initError?.message ?? initError}`,
+          }),
         },
       ],
     };
@@ -545,12 +607,12 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   const { name, arguments: args = {} } = req.params;
   try {
     return {
-      content: [{ type: 'text', text: JSON.stringify(runTool(name, args), null, 2) }],
+      content: [{ type: 'text', text: formatJson(runTool(name, args)) }],
     };
   } catch (err) {
     return {
       isError: true,
-      content: [{ type: 'text', text: JSON.stringify(toErrorPayload(err), null, 2) }],
+      content: [{ type: 'text', text: formatJson(toErrorPayload(err)) }],
     };
   }
 });
