@@ -39,7 +39,7 @@ Skip `pairwise_estimate` for ordinary models: `pairwise_generate` already report
 
 ## Writing the model
 
-The `model` map is the preferred input form: parameter name → values.
+The parameter model is a `model` map: parameter name → values.
 
 ```json
 {
@@ -232,8 +232,9 @@ Rule of thumb: use the same `constraints` array across `pairwise_analyze` / `pai
 
 - `INVALID_INPUT` — malformed model/options, or a typo in a parameter value
 - `CONSTRAINT_ERROR` — malformed constraint syntax or contradictory constraints. Fix syntax errors verbatim; ask the user to loosen contradictory constraints.
-- `INSUFFICIENT_COVERAGE` — the `maxTests` cap was too tight. Raise it or drop the cap.
 - `TUPLE_EXPLOSION` — strength × parameter count is too large. Lower strength or split into sub-models.
+
+A `maxTests` cap that is too tight is not an error: the suite comes back with `coverage` below 1.0 and a warning. Raise or drop the cap, or pass the returned `rows` to `pairwise_extend`.
 
 When a constraint error occurs, repeat back the failing constraint to the user; don't silently rewrite it.
 
