@@ -52,7 +52,7 @@ The `model` map is the preferred input form: parameter name → values.
 }
 ```
 
-An explicit `parameters: [{name, values}, ...]` array is still accepted, but pass one form or the other — never both.
+Key order is column order: `columns` and positional rows follow the order the parameters are written in.
 
 ### Boundary value expansion
 

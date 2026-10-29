@@ -143,7 +143,7 @@ and gets back a table:
 | `pairwise_extend` | Add the minimum extra tests to reach 100%, preserving existing ones |
 | `pairwise_estimate` | Pre-flight sizing (parameters, tuples, estimated tests) without generating |
 
-The model can be given as the `model` map above or as an explicit `parameters` array; test cases are accepted both as `{ param: value }` maps and as positional rows, so the `rows` from one call can be passed straight back into the next. Values come back in the JSON type they were declared with.
+The model is always the `model` map above, in column order; test cases are accepted both as `{ param: value }` maps and as positional rows, so the `rows` from one call can be passed straight back into the next. Values come back in the JSON type they were declared with.
 
 All tools return structured JSON and report coverage in one shape — `coverage`, `stats`, and uncovered tuples as display strings such as `"os=linux, browser=safari"`; constraint-unreachable tuples are removed from the coverage universe. Coverage reports include the authoritative `uncoveredCount`, `omittedUncovered` when the 1,000-entry diagnostic list is truncated, and `invalidTests` for existing rows excluded from coverage accounting. `pairwise_extend` additionally returns `newRows` — just the additions, ready to append to the file — and `before`, the coverage of the suite as it stood, so no separate analyze call is needed to explain them. Values marked `invalid` are kept out of the positive suite and returned as single-fault `negativeRows`, each naming the parameter that holds the invalid value, with `negativeCoverage` metrics alongside; models using equivalence classes also get `classCoverage`.
 

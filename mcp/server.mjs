@@ -92,32 +92,10 @@ const boundaryFields = {
   },
 };
 
-const parameterSchema = {
-  type: 'object',
-  properties: {
-    name: { type: 'string', minLength: 1, description: 'Parameter name (e.g. "os").' },
-    values: {
-      type: 'array',
-      description: 'Discrete values for this parameter.',
-      items: parameterValueSchema,
-    },
-    ...boundaryFields,
-  },
-  required: ['name', 'values'],
-  additionalProperties: false,
-};
-
-const parametersSchema = {
-  type: 'array',
-  description:
-    'Explicit parameter list, required unless `model` is given. Use `model` instead unless a tool refuses the shorthand.',
-  items: parameterSchema,
-};
-
 const modelSchema = {
   type: 'object',
   description:
-    'Parameter model as a { paramName: values } map — the preferred input form, required unless `parameters` is given. A value list is an array; a numeric parameter can instead be { "type": "integer", "range": [min, max] } to get boundary values injected. Example: { "os": ["win", "mac"], "retries": { "type": "integer", "range": [0, 5] }, "verbose": [true, false] }.',
+    'Parameter model as a { paramName: values } map, in column order. A value list is an array; a numeric parameter can instead be { "type": "integer", "range": [min, max] } to get boundary values injected. Example: { "os": ["win", "mac"], "retries": { "type": "integer", "range": [0, 5] }, "verbose": [true, false] }.',
   minProperties: 1,
   additionalProperties: {
     oneOf: [
@@ -193,7 +171,6 @@ const subModelsSchema = {
 /** Fields shared by every tool that takes a parameter model. */
 const modelInputFields = {
   model: modelSchema,
-  parameters: parametersSchema,
   constraints: constraintsSchema,
   strength: {
     type: 'integer',
@@ -228,14 +205,9 @@ const generateInputFields = {
 
 // --- Tool definitions ---------------------------------------------------
 //
-// A tool takes its parameter model as either `model` or `parameters`, and the
-// natural way to say "exactly one of these" is a top-level `anyOf`. It cannot
-// be written here: a client whose backing API rejects top-level schema
-// combinators drops the tool outright, and since the server still connects and
-// still answers tools/list, the loss shows up as four tools that were never
-// registered rather than as an error. The requirement is stated in each field's
-// description and enforced by resolveParameters, which rejects both forms at
-// once and neither of them.
+// Keep every inputSchema free of top-level combinators (anyOf/oneOf/allOf): a
+// client whose backing API rejects them drops the tool silently, and the server
+// still answers tools/list, so the loss shows up only as missing tools.
 
 const tools = [
   {
@@ -245,6 +217,7 @@ const tools = [
     inputSchema: {
       type: 'object',
       properties: generateInputFields,
+      required: ['model'],
     },
   },
   {
@@ -257,7 +230,7 @@ const tools = [
         ...modelInputFields,
         tests: { ...testCasesSchema, description: 'Test cases to analyze.' },
       },
-      required: ['tests'],
+      required: ['model', 'tests'],
     },
   },
   {
@@ -279,7 +252,7 @@ const tools = [
         },
         ...generateInputFields,
       },
-      required: ['existing'],
+      required: ['model', 'existing'],
     },
   },
   {
@@ -292,6 +265,7 @@ const tools = [
         ...modelInputFields,
         subModels: subModelsSchema,
       },
+      required: ['model'],
     },
   },
 ];
@@ -305,8 +279,11 @@ function invalidInput(message) {
   return Object.assign(new Error(message), { code: 'INVALID_INPUT' });
 }
 
-/** Convert the shorthand `model` map into the engine's `parameters` array. */
+/** Convert the `model` map into the engine's `parameters` array. */
 function parametersFromModel(model) {
+  if (model === undefined) {
+    throw invalidInput('Provide the parameter model as `model`.');
+  }
   if (!model || typeof model !== 'object' || Array.isArray(model)) {
     throw invalidInput('`model` must be an object mapping parameter names to their values.');
   }
@@ -326,20 +303,6 @@ function parametersFromModel(model) {
       `model.${name} must be an array of values or a { type, range } object, got ${typeof spec}.`,
     );
   });
-}
-
-/** Resolve whichever input form the caller used into an engine parameter list. */
-function resolveParameters(args) {
-  if (args.model !== undefined && args.parameters !== undefined) {
-    throw invalidInput('Pass either `model` (shorthand) or `parameters` (explicit), not both.');
-  }
-  if (args.model !== undefined) {
-    return parametersFromModel(args.model);
-  }
-  if (Array.isArray(args.parameters)) {
-    return args.parameters;
-  }
-  throw invalidInput('Provide the parameter model as `model` (preferred) or `parameters`.');
 }
 
 // --- Value type restoration ---------------------------------------------
@@ -603,7 +566,7 @@ function runTool(name, args) {
   if (!toolNames.has(name)) {
     throw new Error(`Unknown tool: ${name}`);
   }
-  const parameters = resolveParameters(args);
+  const parameters = parametersFromModel(args.model);
   const columns = parameters.map((param) => param.name);
 
   switch (name) {

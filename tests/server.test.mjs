@@ -47,37 +47,34 @@ function asMaps(out) {
 }
 
 /** Assert that the existing rows plus an extension's `newRows` reach full coverage. */
-async function expectExtensionCovers(client, parameters, existing, out, constraints) {
+async function expectExtensionCovers(client, model, existing, out, constraints) {
   const result = await client.callTool({
     name: 'pairwise_analyze',
-    arguments: { parameters, constraints, tests: [...existing, ...out.newRows] },
+    arguments: { model, constraints, tests: [...existing, ...out.newRows] },
   });
   const report = parseResult(result);
   expect(report.coverage).toBe(1);
   expect(report.invalidTests).toEqual([]);
 }
 
-const discreteParameters = () => [
-  { name: 'a', values: ['1', '2'] },
-  { name: 'b', values: ['x', 'y'] },
-];
+const discreteModel = () => ({
+  a: ['1', '2'],
+  b: ['x', 'y'],
+});
 
-const boundaryParameters = () => [
-  { name: 'qty', type: 'integer', range: [1, 100], values: [] },
-  { name: 'flag', values: ['on', 'off'] },
-];
+const boundaryModel = () => ({
+  qty: { type: 'integer', range: [1, 100] },
+  flag: ['on', 'off'],
+});
 
-const classParameters = () => [
-  {
-    name: 'status',
-    values: [
-      { value: 200, class: 'ok' },
-      { value: 400, class: 'client_error' },
-      { value: 500, class: 'server_error' },
-    ],
-  },
-  { name: 'method', values: ['GET', 'POST'] },
-];
+const classModel = () => ({
+  status: [
+    { value: 200, class: 'ok' },
+    { value: 400, class: 'client_error' },
+    { value: 500, class: 'server_error' },
+  ],
+  method: ['GET', 'POST'],
+});
 
 describe('coverwise-mcp MCP server', () => {
   let client;
@@ -106,12 +103,13 @@ describe('coverwise-mcp MCP server', () => {
       expect(tool.inputSchema.type).toBe('object');
       // A top-level schema combinator makes a client drop the tool while the
       // server still connects and still lists it, so the tool goes missing with
-      // nothing to read anywhere. The model/parameters requirement it would
+      // nothing to read anywhere. The model requirement it would
       // express lives in resolveParameters instead.
       for (const keyword of ['anyOf', 'oneOf', 'allOf', 'not']) {
         expect(tool.inputSchema[keyword]).toBeUndefined();
       }
       expect(tool.inputSchema.properties.model).toBeDefined();
+      expect(tool.inputSchema.properties.parameters).toBeUndefined();
     }
 
     const generateTool = tools.find((tool) => tool.name === 'pairwise_generate');
@@ -130,10 +128,7 @@ describe('coverwise-mcp MCP server', () => {
     const result = await client.callTool({
       name: 'pairwise_estimate',
       arguments: {
-        parameters: [
-          { name: 'os', values: ['win', 'mac', 'linux'] },
-          { name: 'browser', values: ['chrome', 'firefox', 'safari'] },
-        ],
+        model: { os: ['win', 'mac', 'linux'], browser: ['chrome', 'firefox', 'safari'] },
       },
     });
     expect(result.isError).toBeFalsy();
@@ -148,10 +143,7 @@ describe('coverwise-mcp MCP server', () => {
     const result = await client.callTool({
       name: 'pairwise_generate',
       arguments: {
-        parameters: [
-          { name: 'os', values: ['win', 'mac', 'linux'] },
-          { name: 'browser', values: ['chrome', 'firefox', 'safari'] },
-        ],
+        model: { os: ['win', 'mac', 'linux'], browser: ['chrome', 'firefox', 'safari'] },
         seed: 42,
       },
     });
@@ -174,10 +166,7 @@ describe('coverwise-mcp MCP server', () => {
     const result = await client.callTool({
       name: 'pairwise_generate',
       arguments: {
-        parameters: [
-          { name: 'os', values: ['win', 'mac'] },
-          { name: 'browser', values: ['chrome', 'safari'] },
-        ],
+        model: { os: ['win', 'mac'], browser: ['chrome', 'safari'] },
         constraints: ['IF os = win THEN browser != safari'],
         seed: 1,
       },
@@ -193,10 +182,7 @@ describe('coverwise-mcp MCP server', () => {
     const result = await client.callTool({
       name: 'pairwise_analyze',
       arguments: {
-        parameters: [
-          { name: 'a', values: ['1', '2'] },
-          { name: 'b', values: ['x', 'y'] },
-        ],
+        model: { a: ['1', '2'], b: ['x', 'y'] },
         tests: [
           { a: '1', b: 'x' },
           { a: '2', b: 'y' },
@@ -217,10 +203,7 @@ describe('coverwise-mcp MCP server', () => {
     const result = await client.callTool({
       name: 'pairwise_analyze',
       arguments: {
-        parameters: [
-          { name: 'locale', values: ['en', 'ja', 'ar'] },
-          { name: 'dir', values: ['ltr', 'rtl'] },
-        ],
+        model: { locale: ['en', 'ja', 'ar'], dir: ['ltr', 'rtl'] },
         tests: [
           { locale: 'en', dir: 'ltr' },
           { locale: 'ar', dir: 'rtl' },
@@ -238,15 +221,15 @@ describe('coverwise-mcp MCP server', () => {
   });
 
   it('constraint solver excludes partial tuples that cannot extend to a valid complete test', async () => {
-    const parameters = [
-      { name: 'a', values: ['0', '1'] },
-      { name: 'b', values: ['0', '1'] },
-      { name: 'c', values: ['0', '1'] },
-    ];
+    const model = {
+      a: ['0', '1'],
+      b: ['0', '1'],
+      c: ['0', '1'],
+    };
     const constraints = ['IF a = 0 THEN c = 0', 'IF b = 0 THEN c = 1'];
     const generated = await client.callTool({
       name: 'pairwise_generate',
-      arguments: { parameters, constraints, seed: 11 },
+      arguments: { model, constraints, seed: 11 },
     });
     const suite = parseResult(generated);
     expect(suite.coverage).toBe(1);
@@ -254,7 +237,7 @@ describe('coverwise-mcp MCP server', () => {
     const analyzed = await client.callTool({
       name: 'pairwise_analyze',
       // The generated rows go straight back in: no reshaping between calls.
-      arguments: { parameters, constraints, tests: suite.rows },
+      arguments: { model, constraints, tests: suite.rows },
     });
     const report = parseResult(analyzed);
     expect(report.coverage).toBe(1);
@@ -267,10 +250,7 @@ describe('coverwise-mcp MCP server', () => {
     const result = await client.callTool({
       name: 'pairwise_analyze',
       arguments: {
-        parameters: [
-          { name: 'a', values: ['1', '2'] },
-          { name: 'b', values: ['x', 'y'] },
-        ],
+        model: { a: ['1', '2'], b: ['x', 'y'] },
         tests: [{ a: '1' }],
       },
     });
@@ -287,10 +267,7 @@ describe('coverwise-mcp MCP server', () => {
     const result = await client.callTool({
       name: 'pairwise_analyze',
       arguments: {
-        parameters: [
-          { name: 'a', values },
-          { name: 'b', values },
-        ],
+        model: { a: values, b: values },
         tests: [],
       },
     });
@@ -305,10 +282,7 @@ describe('coverwise-mcp MCP server', () => {
     const result = await client.callTool({
       name: 'pairwise_generate',
       arguments: {
-        parameters: [
-          { name: 'qty', type: 'integer', range: [1, 100], values: [] },
-          { name: 'flag', values: ['on', 'off'] },
-        ],
+        model: { qty: { type: 'integer', range: [1, 100] }, flag: ['on', 'off'] },
       },
     });
     const out = parseResult(result);
@@ -327,18 +301,15 @@ describe('coverwise-mcp MCP server', () => {
     const result = await client.callTool({
       name: 'pairwise_generate',
       arguments: {
-        parameters: [
-          {
-            name: 'status',
-            values: [
-              { value: 400, class: 'client_error' },
-              { value: 404, class: 'client_error' },
-              { value: 500, class: 'server_error' },
-              { value: 200, class: 'ok' },
-            ],
-          },
-          { name: 'method', values: ['GET', 'POST'] },
-        ],
+        model: {
+          status: [
+            { value: 400, class: 'client_error' },
+            { value: 404, class: 'client_error' },
+            { value: 500, class: 'server_error' },
+            { value: 200, class: 'ok' },
+          ],
+          method: ['GET', 'POST'],
+        },
       },
     });
     const out = parseResult(result);
@@ -357,10 +328,7 @@ describe('coverwise-mcp MCP server', () => {
       arguments: {
         existing,
         mode: 'strict',
-        parameters: [
-          { name: 'a', values: ['1', '2'] },
-          { name: 'b', values: ['x', 'y'] },
-        ],
+        model: { a: ['1', '2'], b: ['x', 'y'] },
         seed: 7,
       },
     });
@@ -369,7 +337,7 @@ describe('coverwise-mcp MCP server', () => {
     // Only the additions come back; the caller already holds the existing rows.
     expect(out.rows).toBeUndefined();
     expect(out.stats.testCount).toBe(existing.length + out.newRows.length);
-    await expectExtensionCovers(client, discreteParameters(), existing, out);
+    await expectExtensionCovers(client, discreteModel(), existing, out);
     // Coverage of the suite as it stood, folded in to save an analyze call.
     expect(out.before.coverage).toBeCloseTo(0.5, 5);
     expect(out.before.stats.testCount).toBe(existing.length);
@@ -383,10 +351,7 @@ describe('coverwise-mcp MCP server', () => {
     const result = await client.callTool({
       name: 'pairwise_generate',
       arguments: {
-        parameters: [
-          { name: 'a', values: ['1', '2'] },
-          { name: 'b', values: ['x', 'y'] },
-        ],
+        model: { a: ['1', '2'], b: ['x', 'y'] },
       },
     });
     const out = parseResult(result);
@@ -399,10 +364,7 @@ describe('coverwise-mcp MCP server', () => {
     const result = await client.callTool({
       name: 'pairwise_generate',
       arguments: {
-        parameters: [
-          { name: 'a', values: ['1', '2'] },
-          { name: 'b', values: ['x', 'y'] },
-        ],
+        model: { a: ['1', '2'], b: ['x', 'y'] },
         constraints: ['NOT A VALID CONSTRAINT @@@'],
       },
     });
@@ -416,10 +378,7 @@ describe('coverwise-mcp MCP server', () => {
     const result = await client.callTool({
       name: 'pairwise_generate',
       arguments: {
-        parameters: [
-          { name: 'a', values: ['1', '2'] },
-          { name: 'b', values: ['x', 'y'] },
-        ],
+        model: { a: ['1', '2'], b: ['x', 'y'] },
         weights: { a: { 1: 0 } },
       },
     });
@@ -433,7 +392,7 @@ describe('coverwise-mcp MCP server', () => {
     {
       scenario: 'class model + malformed constraint + seed + valid options',
       arguments: {
-        parameters: classParameters(),
+        model: classModel(),
         constraints: ['NOT A VALID CONSTRAINT @@@'],
         seed: 17,
         weights: { method: { GET: 2 } },
@@ -443,7 +402,7 @@ describe('coverwise-mcp MCP server', () => {
     {
       scenario: 'boundary model + malformed constraint + seed + invalid options',
       arguments: {
-        parameters: boundaryParameters(),
+        model: boundaryModel(),
         constraints: ['NOT A VALID CONSTRAINT @@@'],
         seed: 17,
         weights: { flag: { on: 0 } },
@@ -453,7 +412,7 @@ describe('coverwise-mcp MCP server', () => {
     {
       scenario: 'class model + satisfiable constraint + no seed + invalid options',
       arguments: {
-        parameters: classParameters(),
+        model: classModel(),
         constraints: ['IF method = POST THEN status != 500'],
         weights: { method: { GET: 0 } },
       },
@@ -462,7 +421,7 @@ describe('coverwise-mcp MCP server', () => {
     {
       scenario: 'boundary model + no constraint or seed + valid options',
       arguments: {
-        parameters: boundaryParameters(),
+        model: boundaryModel(),
         weights: { flag: { on: 2 } },
         seeds: [{ qty: 1, flag: 'on' }],
         subModels: [{ parameters: ['qty', 'flag'], strength: 2 }],
@@ -472,7 +431,7 @@ describe('coverwise-mcp MCP server', () => {
     {
       scenario: 'boundary model + satisfiable constraint + seed + valid options',
       arguments: {
-        parameters: boundaryParameters(),
+        model: boundaryModel(),
         constraints: ['IF flag = on THEN qty >= 0'],
         seed: 23,
         weights: { flag: { off: 2 } },
@@ -481,7 +440,7 @@ describe('coverwise-mcp MCP server', () => {
     {
       scenario: 'discrete model + satisfiable constraint + seed + valid options',
       arguments: {
-        parameters: discreteParameters(),
+        model: discreteModel(),
         constraints: ['IF a = 1 THEN b = x'],
         seed: 29,
         weights: { a: { 1: 2 } },
@@ -510,7 +469,7 @@ describe('coverwise-mcp MCP server', () => {
     const result = await client.callTool({
       name: 'pairwise_analyze',
       arguments: {
-        parameters: discreteParameters(),
+        model: discreteModel(),
         tests: [
           { a: '1', b: 'x' },
           { a: '1', b: 'y' },
@@ -529,7 +488,7 @@ describe('coverwise-mcp MCP server', () => {
     const result = await client.callTool({
       name: 'pairwise_analyze',
       arguments: {
-        parameters: discreteParameters(),
+        model: discreteModel(),
         tests: [{ a: '1' }],
         constraints: ['IF a = 1 THEN b = x'],
       },
@@ -545,10 +504,7 @@ describe('coverwise-mcp MCP server', () => {
     const result = await client.callTool({
       name: 'pairwise_analyze',
       arguments: {
-        parameters: [
-          { name: 'a', values },
-          { name: 'b', values },
-        ],
+        model: { a: values, b: values },
         tests: [],
         constraints: [`a IN {${values.join(', ')}}`],
       },
@@ -569,7 +525,7 @@ describe('coverwise-mcp MCP server', () => {
       { a: '1', b: 'x' },
       { a: '2', b: 'y' },
     ];
-    const args = { existing, parameters: discreteParameters() };
+    const args = { existing, model: discreteModel() };
     if (constraints) {
       args.constraints = ['IF a = 1 THEN b = x'];
     }
@@ -584,7 +540,7 @@ describe('coverwise-mcp MCP server', () => {
     const out = parseResult(result);
     expect(result.isError).toBeFalsy();
     expect(out.coverage).toBe(1);
-    await expectExtensionCovers(client, discreteParameters(), existing, out, args.constraints);
+    await expectExtensionCovers(client, discreteModel(), existing, out, args.constraints);
   });
 
   it.each([
@@ -608,11 +564,7 @@ describe('coverwise-mcp MCP server', () => {
     'covers pairwise_estimate interaction: $scenario',
     async ({ constraints, strength, subModels }) => {
       const args = {
-        parameters: [
-          { name: 'a', values: ['1', '2'] },
-          { name: 'b', values: ['x', 'y'] },
-          { name: 'c', values: ['on', 'off'] },
-        ],
+        model: { a: ['1', '2'], b: ['x', 'y'], c: ['on', 'off'] },
       };
       if (constraints) {
         args.constraints = ['IF a = 1 THEN b = x'];
@@ -650,23 +602,6 @@ describe('high-level input and output shapes', () => {
     const result = await client.callTool({ name, arguments: args });
     return { result, payload: parseResult(result) };
   };
-
-  it('accepts the shorthand model and the explicit parameter list interchangeably', async () => {
-    const shorthand = await call('pairwise_generate', {
-      model: { os: ['win', 'mac'], browser: ['chrome', 'safari'], mode: ['fast', 'safe'] },
-      seed: 5,
-    });
-    const explicit = await call('pairwise_generate', {
-      parameters: [
-        { name: 'os', values: ['win', 'mac'] },
-        { name: 'browser', values: ['chrome', 'safari'] },
-        { name: 'mode', values: ['fast', 'safe'] },
-      ],
-      seed: 5,
-    });
-    expect(shorthand.payload.columns).toEqual(['os', 'browser', 'mode']);
-    expect(shorthand.payload).toEqual(explicit.payload);
-  });
 
   it('accepts a { type, range } spec inside the shorthand model', async () => {
     const { payload } = await call('pairwise_generate', {
@@ -820,16 +755,6 @@ describe('high-level input and output shapes', () => {
     expect(result.isError).toBe(true);
     expect(payload.code).toBe('INVALID_INPUT');
     expect(payload.message).toMatch(/tests\[1\] has 1 values but the model has 2 parameters/);
-  });
-
-  it('rejects passing both input forms at once', async () => {
-    const { result, payload } = await call('pairwise_generate', {
-      model: { a: ['1', '2'] },
-      parameters: [{ name: 'a', values: ['1', '2'] }],
-    });
-    expect(result.isError).toBe(true);
-    expect(payload.code).toBe('INVALID_INPUT');
-    expect(payload.message).toMatch(/not both/);
   });
 
   it('rejects a call with no parameter model at all', async () => {
