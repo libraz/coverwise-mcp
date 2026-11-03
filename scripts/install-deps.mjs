@@ -8,7 +8,8 @@
  *   1. If ${CLAUDE_PLUGIN_ROOT}/node_modules exists (local dev clone), do nothing.
  *   2. Otherwise, install into ${CLAUDE_PLUGIN_DATA}/node_modules using npm
  *      (npm ships with Node; yarn may not be available on the user's machine).
- *   3. Idempotent: skip if the dependency lock already matches.
+ *   3. Idempotent: skip when the installed version matches and every
+ *      dependency has its package.json.
  */
 import { execSync } from 'node:child_process';
 import {
@@ -16,6 +17,7 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
+  rmSync,
   symlinkSync,
   unlinkSync,
   writeFileSync,
@@ -65,11 +67,16 @@ const pkgJson = JSON.parse(readFileSync(pkgSrc, 'utf8'));
 const currentVersion = pkgJson.version ?? '0.0.0';
 const installed = existsSync(marker) ? readFileSync(marker, 'utf8').trim() : null;
 
-const depsPresent =
-  installed === currentVersion && existsSync(join(dataNodeModules, '@libraz', 'coverwise'));
+const depNames = Object.keys(pkgJson.dependencies ?? {});
+const missingDeps = () =>
+  depNames.filter((name) => !existsSync(join(dataNodeModules, name, 'package.json')));
+
+const depsPresent = installed === currentVersion && missingDeps().length === 0;
 
 if (!depsPresent) {
   mkdirSync(data, { recursive: true });
+  // npm reports a partly extracted package as up to date, so install into an empty tree.
+  rmSync(dataNodeModules, { recursive: true, force: true });
 
   // Write a minimal package.json containing only runtime deps (no devDeps, no scripts).
   const runtimePkg = {
@@ -87,6 +94,10 @@ if (!depsPresent) {
       cwd: data,
       stdio: 'inherit',
     });
+    const stillMissing = missingDeps();
+    if (stillMissing.length > 0) {
+      throw new Error(`incomplete after npm install: ${stillMissing.join(', ')}`);
+    }
     writeFileSync(marker, currentVersion);
     process.stderr.write('[coverwise-mcp] dependencies installed.\n');
   } catch (err) {
