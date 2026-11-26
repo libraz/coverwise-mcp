@@ -1,6 +1,6 @@
 {
   "name": "coverwise-mcp",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "private": true,
   "type": "module",
   "packageManager": "yarn@4.19.0",
