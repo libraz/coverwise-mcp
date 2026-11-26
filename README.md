@@ -56,10 +56,11 @@ Clone the repo and install dev dependencies with Yarn 4 (pinned via mise):
 ```bash
 git clone https://github.com/libraz/coverwise-mcp
 cd coverwise-mcp
+mise install
 yarn install
 ```
 
-The pinned toolchain (Node 22.23.2, Yarn 4.18.0) is declared in `mise.toml`. Run `mise install` and [mise](https://mise.jdx.dev/) applies it on entering the directory.
+The Node and Yarn versions are pinned in `mise.toml`; [mise](https://mise.jdx.dev/) applies them on entering the directory.
 
 ## How it gets invoked
 

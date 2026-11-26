@@ -56,10 +56,11 @@ Claude が複数パラメータを持つコード — CLI フラグ、設定オ�
 ```bash
 git clone https://github.com/libraz/coverwise-mcp
 cd coverwise-mcp
+mise install
 yarn install
 ```
 
-ツールチェーン(Node 22.23.2、Yarn 4.18.0)は `mise.toml` に固定されています。[mise](https://mise.jdx.dev/) を入れて `mise install` すればディレクトリに入った時点で適用されます。
+Node と Yarn のバージョンは `mise.toml` に固定されています。[mise](https://mise.jdx.dev/) がディレクトリに入った時点で適用します。
 
 ## どうやって発動するか
 
